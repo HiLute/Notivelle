@@ -1,0 +1,13 @@
+# Node / Vite
+node_modules/
+dist/
+*.log
+
+# Rust / Tauri (src-tauri/.gitignore покрывает target/ и gen/schemas/)
+
+# Локальные настройки Claude Code
+.claude/settings.local.json
+
+# ОС и редакторы
+.DS_Store
+*.swp

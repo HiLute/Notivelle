@@ -1,0 +1,120 @@
+/*
+ * Дизайн-токены приложения. Все цвета задаются здесь, а редактор
+ * (src/editor/theme.ts) ссылается на них через var(--…).
+ * Пока тема выбирается только по системной (prefers-color-scheme);
+ * ручное переключение появится с настройками на этапе M6.
+ */
+:root {
+  color-scheme: light dark;
+
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif;
+  --font-text: var(--font-ui);
+  --font-mono: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, "Cascadia Code",
+    "DejaVu Sans Mono", monospace;
+  --editor-font-size: 16px;
+  --editor-padding: 1.5rem;
+  --line-width: 46rem;
+
+  /* Светлая тема */
+  --background-primary: #ffffff;
+  --background-secondary: #f5f5f7;
+  --border: #e4e4e7;
+  --border-strong: #cfcfd4;
+  --text-normal: #222326;
+  --text-heading: #141517;
+  --text-muted: #5c5f66;
+  --text-faint: #9a9da5;
+  --text-error: #d93636;
+  --accent: #7c4dff;
+  --link: #6a40e6;
+  --selection: rgb(124 77 255 / 0.18);
+  --selection-match: rgb(124 77 255 / 0.1);
+  --search-match: rgb(255 196 0 / 0.35);
+  --search-match-border: rgb(204 150 0 / 0.6);
+  --search-match-selected: rgb(255 150 0 / 0.5);
+
+  --code-keyword: #a626a4;
+  --code-string: #50a14f;
+  --code-number: #986801;
+  --code-comment: #a0a1a7;
+  --code-function: #4078f2;
+  --code-type: #c18401;
+  --code-property: #e45649;
+  --code-tag: #e45649;
+  --code-operator: #0184bc;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background-primary: #1e1e1e;
+    --background-secondary: #262626;
+    --border: #333333;
+    --border-strong: #474747;
+    --text-normal: #dcddde;
+    --text-heading: #f2f2f2;
+    --text-muted: #a3a3a3;
+    --text-faint: #6f6f6f;
+    --text-error: #fb6464;
+    --accent: #a882ff;
+    --link: #a882ff;
+    --selection: rgb(168 130 255 / 0.28);
+    --selection-match: rgb(168 130 255 / 0.14);
+    --search-match: rgb(255 200 0 / 0.22);
+    --search-match-border: rgb(255 200 0 / 0.45);
+    --search-match-selected: rgb(255 150 0 / 0.4);
+
+    --code-keyword: #c678dd;
+    --code-string: #98c379;
+    --code-number: #d19a66;
+    --code-comment: #7f848e;
+    --code-function: #61afef;
+    --code-type: #e5c07b;
+    --code-property: #e06c75;
+    --code-tag: #e06c75;
+    --code-operator: #56b6c2;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Редактор занимает всё место, строка состояния прижата к низу. */
+#app {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: 100%;
+}
+
+.editor-host {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.statusbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border-top: 1px solid var(--border);
+  user-select: none;
+}

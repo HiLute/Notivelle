@@ -1,0 +1,39 @@
+[package]
+name = "md-editor"
+version = "0.1.0"
+description = "Obsidian-like Markdown editor for standalone files"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[lib]
+# Имя библиотеки отличается от имени бинарника: так советует шаблон Tauri,
+# чтобы на Windows не столкнулись одноимённые артефакты сборки.
+# crate-type только rlib: staticlib/cdylib нужны лишь для мобильных платформ
+# и заметно замедляют каждую сборку.
+name = "md_editor_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.2", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.3", features = [] }
+tauri-plugin-log = "2"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[lints.rust]
+# Небезопасный код запрещён везде, кроме мест, явно помеченных
+# `#[allow(unsafe_code)]`. Сейчас такое место одно: main.rs, установка
+# переменной окружения для WebKitGTK.
+unsafe_code = "deny"
+
+[lints.clippy]
+# pedantic — строгий набор проверок. Шумноват, но хорошо учит идиомам Rust.
+pedantic = { level = "warn", priority = -1 }
+# Каждый unsafe-блок обязан иметь комментарий `// SAFETY:` с обоснованием.
+undocumented_unsafe_blocks = "deny"
