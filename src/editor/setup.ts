@@ -13,6 +13,7 @@ import {
   rectangularSelection,
 } from "@codemirror/view";
 
+import { reliableDragMove } from "./drag-move";
 import { editorTheme, markdownHighlightStyle } from "./theme";
 
 /**
@@ -27,6 +28,7 @@ export function editorExtensions(): Extension {
     history(),
     drawSelection(),
     dropCursor(),
+    reliableDragMove,
     EditorState.allowMultipleSelections.of(true),
     indentOnInput(),
     bracketMatching(),
