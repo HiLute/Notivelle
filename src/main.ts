@@ -6,6 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { runEditorKeymapInLatin } from "./editor/layout-keys";
 import { editorExtensions } from "./editor/setup";
 import { FILES_PENDING_EVENT, api, errorMessage } from "./ipc";
 import { StatusBar } from "./statusbar";
@@ -84,15 +85,16 @@ function shortcutAction(event: KeyboardEvent): (() => void) | null {
 
 // Горячие клавиши приложения перехватываем на фазе погружения (capture),
 // раньше редактора, и дальше не пускаем: иначе, например, Ctrl+Tab ещё и
-// вставил бы табуляцию.
+// вставил бы табуляцию. Там же чиним сочетания редактора в нелатинской
+// раскладке (Ctrl+Z при русской раскладке и т. п.).
 window.addEventListener(
   "keydown",
   (event) => {
     const action = shortcutAction(event);
-    if (!action) return;
+    if (action) action();
+    else if (!runEditorKeymapInLatin(view, event)) return;
     event.preventDefault();
     event.stopPropagation();
-    action();
   },
   { capture: true },
 );
