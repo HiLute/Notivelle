@@ -25,7 +25,7 @@ use crate::error::AppError;
 ///
 /// Обёртка над `u64` (newtype) не даёт перепутать его с другим числом, а
 /// `serde(transparent)` передаёт его во фронтенд просто числом.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DocumentId(u64);
 
@@ -39,7 +39,12 @@ impl fmt::Display for DocumentId {
 /// он живёт в редакторе и приходит целиком при сохранении.
 #[derive(Debug)]
 struct Entry {
+    /// Путь, по которому файл открыли (для показа и записи).
     path: PathBuf,
+    /// Канонический путь: все симлинки раскрыты, `.` и `..` убраны. Это
+    /// «личность» файла — по ней узнаём, что он уже открыт, даже если его
+    /// открывают по другому пути.
+    identity: PathBuf,
     format: TextFormat,
     /// Отпечаток байтов на диске после последнего чтения или записи.
     disk_hash: u64,
@@ -67,6 +72,34 @@ pub struct FormatInfo {
     pub mixed_line_endings: bool,
 }
 
+/// Результат [`Documents::open`].
+#[derive(Debug)]
+pub enum Opened {
+    /// Файл прочитан и зарегистрирован.
+    New(OpenedDocument),
+    /// Файл уже открыт; заново он не читался.
+    AlreadyOpen(DocumentId),
+}
+
+/// Результат открытия одного файла из пачки, как его видит фронтенд:
+/// `{ status: "opened", document }`, `{ status: "alreadyOpen", id }` или
+/// `{ status: "failed", path, message }`.
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum OpenOutcome {
+    Opened {
+        document: OpenedDocument,
+    },
+    /// Фронтенду достаточно переключиться на вкладку этого документа.
+    AlreadyOpen {
+        id: DocumentId,
+    },
+    Failed {
+        path: String,
+        message: String,
+    },
+}
+
 impl From<TextFormat> for FormatInfo {
     fn from(format: TextFormat) -> Self {
         Self {
@@ -88,40 +121,101 @@ pub struct Documents {
 
 impl Documents {
     /// Читает файл с диска и регистрирует его.
-    pub fn open(&self, path: &Path) -> Result<OpenedDocument, AppError> {
-        // Относительный путь (из командной строки) превращаем в абсолютный
-        // сразу: рабочая папка процесса потом может смениться. Симлинки при
-        // этом не раскрываются, пользователь видит путь, который указал.
-        let path = std::path::absolute(path).map_err(|source| AppError::Read {
+    ///
+    /// Если файл уже открыт — в том числе по другому пути (через симлинк,
+    /// относительный путь, `..`), — возвращает [`Opened::AlreadyOpen`] и
+    /// файл заново не читает: у одного файла одна вкладка.
+    pub fn open(&self, path: &Path) -> Result<Opened, AppError> {
+        let read_error = |source| AppError::Read {
             path: path.to_owned(),
             source,
-        })?;
+        };
+        // Относительный путь (из командной строки) превращаем в абсолютный
+        // сразу: рабочая папка процесса потом может смениться. Симлинки при
+        // этом не раскрываются: пользователь видит путь, который указал.
+        let path = std::path::absolute(path).map_err(read_error)?;
+        let identity = std::fs::canonicalize(&path).map_err(read_error)?;
+        if let Some(id) = find_by_identity(&self.lock(), &identity) {
+            return Ok(Opened::AlreadyOpen(id));
+        }
 
-        let bytes = disk::read(&path)?;
-        let decoded = document::decode(&bytes).map_err(|source| AppError::Decode {
-            path: path.clone(),
-            source,
-        })?;
+        let (decoded, disk_hash) = load(&path)?;
 
+        let mut entries = self.lock();
+        // Пока файл читался, его мог открыть другой поток (например, два
+        // быстрых двойных клика по одному файлу). Проверяем ещё раз, уже под
+        // замком, и только потом регистрируем.
+        if let Some(id) = find_by_identity(&entries, &identity) {
+            return Ok(Opened::AlreadyOpen(id));
+        }
         // Relaxed достаточно: от счётчика нужна только уникальность,
         // порядок относительно других операций памяти не важен.
         let id = DocumentId(self.next_id.fetch_add(1, Ordering::Relaxed) + 1);
-        let opened = OpenedDocument {
-            id,
-            path: path.display().to_string(),
-            file_name: display_name(&path),
-            text: decoded.text,
-            format: decoded.format.into(),
-        };
-        self.lock().insert(
+        let format = decoded.format;
+        let opened = opened_document(id, &path, decoded);
+        entries.insert(
             id,
             Entry {
                 path,
-                format: decoded.format,
-                disk_hash: disk::content_hash(&bytes),
+                identity,
+                format,
+                disk_hash,
             },
         );
-        Ok(opened)
+        Ok(Opened::New(opened))
+    }
+
+    /// Перечитывает с диска все открытые документы, по порядку открытия.
+    ///
+    /// Нужен, когда перезагрузилась страница фронтенда (при разработке Vite
+    /// перезагружает её после правок кода): вкладки пропали, а реестр ещё
+    /// помнит файлы. Без этого повторное открытие такого файла вернуло бы
+    /// «уже открыт» для вкладки, которой больше нет. Файлы, которые прочитать
+    /// не удалось, из реестра убираются.
+    pub fn reopen_all(&self) -> Vec<OpenOutcome> {
+        let mut known: Vec<(DocumentId, PathBuf)> = self
+            .lock()
+            .iter()
+            .map(|(&id, entry)| (id, entry.path.clone()))
+            .collect();
+        known.sort_unstable_by_key(|&(id, _)| id);
+
+        known
+            .into_iter()
+            .map(|(id, path)| match load(&path) {
+                Ok((decoded, disk_hash)) => {
+                    if let Some(entry) = self.lock().get_mut(&id) {
+                        entry.format = decoded.format;
+                        entry.disk_hash = disk_hash;
+                    }
+                    OpenOutcome::Opened {
+                        document: opened_document(id, &path, decoded),
+                    }
+                }
+                Err(err) => {
+                    self.close(id);
+                    OpenOutcome::Failed {
+                        path: path.display().to_string(),
+                        message: err.to_string(),
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Открывает несколько файлов. Ошибка с одним не мешает открыть остальные.
+    pub fn open_all(&self, paths: &[PathBuf]) -> Vec<OpenOutcome> {
+        paths
+            .iter()
+            .map(|path| match self.open(path) {
+                Ok(Opened::New(document)) => OpenOutcome::Opened { document },
+                Ok(Opened::AlreadyOpen(id)) => OpenOutcome::AlreadyOpen { id },
+                Err(err) => OpenOutcome::Failed {
+                    path: path.display().to_string(),
+                    message: err.to_string(),
+                },
+            })
+            .collect()
     }
 
     /// Сохраняет текст документа на диск в его исходном формате.
@@ -192,6 +286,35 @@ impl Documents {
     }
 }
 
+/// Читает и разбирает файл. Возвращает текст с форматом и отпечаток байтов.
+fn load(path: &Path) -> Result<(document::Decoded, u64), AppError> {
+    let bytes = disk::read(path)?;
+    let decoded = document::decode(&bytes).map_err(|source| AppError::Decode {
+        path: path.to_owned(),
+        source,
+    })?;
+    Ok((decoded, disk::content_hash(&bytes)))
+}
+
+fn opened_document(id: DocumentId, path: &Path, decoded: document::Decoded) -> OpenedDocument {
+    OpenedDocument {
+        id,
+        path: path.display().to_string(),
+        file_name: display_name(path),
+        text: decoded.text,
+        format: decoded.format.into(),
+    }
+}
+
+/// Ищет документ по каноническому пути. Перебор, а не отдельный индекс:
+/// открытых файлов единицы, а две структуры пришлось бы держать в согласии.
+fn find_by_identity(entries: &HashMap<DocumentId, Entry>, identity: &Path) -> Option<DocumentId> {
+    entries
+        .iter()
+        .find(|(_, entry)| entry.identity == identity)
+        .map(|(&id, _)| id)
+}
+
 fn display_name(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
@@ -217,6 +340,93 @@ mod tests {
         (dir, path)
     }
 
+    /// Открывает файл, который ещё не открыт, и возвращает документ.
+    fn open_new(documents: &Documents, path: &Path) -> OpenedDocument {
+        match documents.open(path) {
+            Ok(Opened::New(document)) => document,
+            other => panic!("ожидали новый документ, получили {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reopening_returns_the_same_document() {
+        let (dir, path) = file_with(b"text\n");
+        let documents = Documents::default();
+        let opened = open_new(&documents, &path);
+
+        // Тот же файл по пути с `..` — это всё ещё тот же документ.
+        let detour = dir.path().join("sub").join("..").join("note.md");
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        assert!(matches!(
+            documents.open(&detour),
+            Ok(Opened::AlreadyOpen(id)) if id == opened.id
+        ));
+
+        // После закрытия файл открывается заново, с новым идентификатором.
+        documents.close(opened.id);
+        assert_ne!(open_new(&documents, &path).id, opened.id);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_to_open_file_is_recognized() {
+        let (dir, path) = file_with(b"text\n");
+        let link = dir.path().join("link.md");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        let documents = Documents::default();
+        let opened = open_new(&documents, &path);
+
+        assert!(matches!(
+            documents.open(&link),
+            Ok(Opened::AlreadyOpen(id)) if id == opened.id
+        ));
+    }
+
+    #[test]
+    fn reopen_all_rereads_files_in_opening_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first.md");
+        let second = dir.path().join("second.md");
+        fs::write(&first, "one\n").unwrap();
+        fs::write(&second, "two\n").unwrap();
+        let documents = Documents::default();
+        let first_id = open_new(&documents, &first).id;
+        let second_id = open_new(&documents, &second).id;
+
+        fs::write(&first, "one, edited outside\n").unwrap();
+        fs::remove_file(&second).unwrap();
+        let outcomes = documents.reopen_all();
+
+        let json = serde_json::to_value(&outcomes).unwrap();
+        assert_eq!(json[0]["status"], "opened");
+        assert_eq!(json[0]["document"]["text"], "one, edited outside\n");
+        assert_eq!(json[1]["status"], "failed");
+        // Перечитанный документ сохраняется без ложной тревоги «изменён снаружи»,
+        // а неудавшийся убран из реестра.
+        documents
+            .save(first_id, "one, edited outside\nmore\n", false)
+            .unwrap();
+        assert!(matches!(
+            documents.save(second_id, "x", false),
+            Err(AppError::UnknownDocument(_))
+        ));
+    }
+
+    #[test]
+    fn open_all_reports_each_file_separately() {
+        let (dir, path) = file_with(b"text\n");
+        let missing = dir.path().join("missing.md");
+        let documents = Documents::default();
+
+        let outcomes = documents.open_all(&[path.clone(), missing, path]);
+
+        let statuses: Vec<_> = outcomes
+            .iter()
+            .map(|outcome| serde_json::to_value(outcome).unwrap()["status"].clone())
+            .collect();
+        assert_eq!(statuses, ["opened", "failed", "alreadyOpen"]);
+    }
+
     /// Критерий готовности M1: файл с CRLF и BOM после «открыть → сохранить»
     /// совпадает с исходным побайтово. Проверяем и с реальной записью на диск:
     /// сначала сохраняем правку, потом возвращаем исходный текст.
@@ -225,7 +435,7 @@ mod tests {
         let (_dir, path) = file_with(CRLF_WITH_BOM);
         let documents = Documents::default();
 
-        let opened = documents.open(&path).unwrap();
+        let opened = open_new(&documents, &path);
         assert_eq!(opened.text, "# Заметка\n\n- пункт\n");
         assert_eq!(opened.format.line_ending, LineEnding::CrLf);
         assert!(opened.format.has_bom);
@@ -253,7 +463,7 @@ mod tests {
             .set_modified(old_time)
             .unwrap();
         let documents = Documents::default();
-        let opened = documents.open(&path).unwrap();
+        let opened = open_new(&documents, &path);
 
         documents.save(opened.id, &opened.text, false).unwrap();
 
@@ -264,7 +474,7 @@ mod tests {
     fn refuses_to_overwrite_external_changes_unless_forced() {
         let (_dir, path) = file_with(b"original\n");
         let documents = Documents::default();
-        let opened = documents.open(&path).unwrap();
+        let opened = open_new(&documents, &path);
         fs::write(&path, "changed by another program\n").unwrap();
 
         let result = documents.save(opened.id, "mine\n", false);
@@ -285,7 +495,7 @@ mod tests {
     fn deleted_file_is_reported_and_can_be_recreated() {
         let (_dir, path) = file_with(b"text\n");
         let documents = Documents::default();
-        let opened = documents.open(&path).unwrap();
+        let opened = open_new(&documents, &path);
         fs::remove_file(&path).unwrap();
 
         let result = documents.save(opened.id, "text\n", false);
@@ -302,7 +512,7 @@ mod tests {
     fn saving_mixed_file_reports_normalized_format() {
         let (_dir, path) = file_with(b"a\r\nb\r\nc\n");
         let documents = Documents::default();
-        let opened = documents.open(&path).unwrap();
+        let opened = open_new(&documents, &path);
         assert!(opened.format.mixed_line_endings);
 
         let format = documents.save(opened.id, "a\nb\nc\nd\n", false).unwrap();
@@ -315,7 +525,7 @@ mod tests {
     fn closed_or_unknown_documents_cannot_be_saved() {
         let (_dir, path) = file_with(b"text\n");
         let documents = Documents::default();
-        let opened = documents.open(&path).unwrap();
+        let opened = open_new(&documents, &path);
 
         documents.close(opened.id);
         documents.close(opened.id);
@@ -337,7 +547,7 @@ mod tests {
     #[test]
     fn opened_document_serializes_flat_for_frontend() {
         let (_dir, path) = file_with(CRLF_WITH_BOM);
-        let opened = Documents::default().open(&path).unwrap();
+        let opened = open_new(&Documents::default(), &path);
         let json = serde_json::to_value(&opened).unwrap();
 
         assert_eq!(json["id"], 1);

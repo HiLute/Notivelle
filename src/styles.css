@@ -20,6 +20,7 @@
   --background-secondary: #f5f5f7;
   --border: #e4e4e7;
   --border-strong: #cfcfd4;
+  --background-hover: #e9e9ec;
   --text-normal: #222326;
   --text-heading: #141517;
   --text-muted: #5c5f66;
@@ -50,6 +51,7 @@
     --background-secondary: #262626;
     --border: #333333;
     --border-strong: #474747;
+    --background-hover: #303030;
     --text-normal: #dcddde;
     --text-heading: #f2f2f2;
     --text-muted: #a3a3a3;
@@ -94,10 +96,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Редактор занимает всё место, строка состояния прижата к низу. */
+/* Вкладки сверху, редактор занимает всё остальное, строка состояния внизу.
+   Области заданы по именам: когда полоса вкладок скрыта (hidden), строка
+   «tabs» просто становится нулевой высоты и ничего не съезжает. */
 #app {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas: "tabs" "editor" "status";
+  grid-template-rows: auto minmax(0, 1fr) auto;
   /* Без явной колонки она растягивается до min-content содержимого
      (например, длинного пути в строке состояния) шире окна. */
   grid-template-columns: minmax(0, 1fr);
@@ -105,11 +110,125 @@ body {
 }
 
 .editor-host {
+  grid-area: editor;
   min-height: 0;
   overflow: hidden;
 }
 
+/* ---------- Вкладки ---------- */
+
+.tabbar {
+  grid-area: tabs;
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.tabbar[hidden] {
+  display: none;
+}
+
+.tab {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  max-width: 15rem;
+  /* Вкладка налезает на нижнюю границу полосы, чтобы активная сливалась
+     с редактором. */
+  margin-bottom: -1px;
+  padding: 4px 4px 4px 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.tab:hover {
+  background: var(--background-hover);
+  color: var(--text-normal);
+}
+
+.tab[aria-selected="true"] {
+  background: var(--background-primary);
+  border-color: var(--border);
+  color: var(--text-normal);
+}
+
+.tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-close {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  visibility: hidden;
+}
+
+.tab:hover .tab-close,
+.tab[aria-selected="true"] .tab-close,
+.tab[data-dirty] .tab-close {
+  visibility: visible;
+}
+
+.tab-close:hover {
+  background: var(--background-hover);
+}
+
+.tab-close::before {
+  content: "×";
+  font-size: 16px;
+}
+
+/* Несохранённые изменения: вместо крестика точка, крестик — при наведении. */
+.tab[data-dirty] .tab-close:not(:hover)::before {
+  content: "●";
+  font-size: 9px;
+  color: var(--accent);
+}
+
+/* ---------- Перетаскивание файлов ---------- */
+
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-normal);
+  font-size: 15px;
+  pointer-events: none;
+}
+
+.drop-overlay[hidden] {
+  display: none;
+}
+
 .statusbar {
+  grid-area: status;
   display: flex;
   align-items: center;
   gap: 1.25rem;

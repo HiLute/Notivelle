@@ -7,6 +7,7 @@
 //! Вызывать их можно только не из главного потока, иначе замрёт интерфейс.
 //! Команды запускают их через `spawn_blocking`.
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -24,17 +25,25 @@ const SAVE: &str = "Сохранить";
 const DISCARD: &str = "Не сохранять";
 const CANCEL: &str = "Отмена";
 
-/// Спрашивает, какой файл открыть. `None` — пользователь передумал.
-pub fn pick_markdown_file(window: &WebviewWindow) -> Option<PathBuf> {
+/// Сколько имён файлов перечислять в вопросе о несохранённых изменениях.
+const LISTED_FILES_LIMIT: usize = 10;
+
+/// Спрашивает, какие файлы открыть (можно выбрать несколько). Пустой
+/// список — пользователь передумал.
+pub fn pick_markdown_files(window: &WebviewWindow) -> Vec<PathBuf> {
     window
         .dialog()
         .file()
         .set_parent(window)
-        .set_title("Открыть файл")
+        .set_title("Открыть файлы")
         .add_filter("Markdown", MARKDOWN_EXTENSIONS)
-        .blocking_pick_file()?
-        .into_path()
-        .ok()
+        .blocking_pick_files()
+        .unwrap_or_default()
+        .into_iter()
+        // На десктопе диалог всегда возвращает пути; URL бывают только
+        // на мобильных платформах, их просто пропускаем.
+        .filter_map(|file| file.into_path().ok())
+        .collect()
 }
 
 /// Ответ на вопрос о несохранённых изменениях. Во фронтенд уходит строкой
@@ -48,13 +57,11 @@ pub enum UnsavedChoice {
 }
 
 /// Спрашивает, что делать с несохранёнными изменениями перед тем, как
-/// закрыть документ или открыть вместо него другой.
-pub fn ask_unsaved_changes(window: &WebviewWindow, file_name: &str) -> UnsavedChoice {
+/// закрыть вкладку или окно. Для нескольких файлов — один общий вопрос.
+pub fn ask_unsaved_changes(window: &WebviewWindow, file_names: &[String]) -> UnsavedChoice {
     let result = window
         .dialog()
-        .message(format!(
-            "В «{file_name}» есть несохранённые изменения. Сохранить их?"
-        ))
+        .message(unsaved_changes_message(file_names))
         .title("Несохранённые изменения")
         .kind(MessageDialogKind::Warning)
         .parent(window)
@@ -65,6 +72,26 @@ pub fn ask_unsaved_changes(window: &WebviewWindow, file_name: &str) -> UnsavedCh
         ))
         .blocking_show_with_result();
     unsaved_choice_from(&result)
+}
+
+fn unsaved_changes_message(file_names: &[String]) -> String {
+    match file_names {
+        [single] => format!("В «{single}» есть несохранённые изменения. Сохранить их?"),
+        names => {
+            // `write!` в `String` (трейт `fmt::Write`) форматирует сразу в
+            // строку, без промежуточной `String` от `format!`. Запись в
+            // память не может завершиться ошибкой, поэтому результат игнорируем.
+            let mut message = String::from("Несохранённые изменения в файлах:\n");
+            for name in names.iter().take(LISTED_FILES_LIMIT) {
+                let _ = write!(message, "\n• {name}");
+            }
+            if names.len() > LISTED_FILES_LIMIT {
+                let _ = write!(message, "\n… и ещё {}", names.len() - LISTED_FILES_LIMIT);
+            }
+            message.push_str("\n\nСохранить их?");
+            message
+        }
+    }
 }
 
 /// Переводит нажатую кнопку в [`UnsavedChoice`].
@@ -126,6 +153,23 @@ mod tests {
             unsaved_choice_from(&MessageDialogResult::Cancel),
             UnsavedChoice::Cancel
         );
+    }
+
+    #[test]
+    fn lists_unsaved_files() {
+        assert_eq!(
+            unsaved_changes_message(&["a.md".into()]),
+            "В «a.md» есть несохранённые изменения. Сохранить их?"
+        );
+        assert_eq!(
+            unsaved_changes_message(&["a.md".into(), "b.md".into()]),
+            "Несохранённые изменения в файлах:\n\n• a.md\n• b.md\n\nСохранить их?"
+        );
+
+        let many: Vec<String> = (1..=12).map(|n| format!("{n}.md")).collect();
+        let message = unsaved_changes_message(&many);
+        assert!(message.contains("• 10.md\n… и ещё 2"), "{message}");
+        assert!(!message.contains("11.md"), "{message}");
     }
 
     #[test]

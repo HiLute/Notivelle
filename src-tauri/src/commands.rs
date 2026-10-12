@@ -14,9 +14,9 @@ use serde::Serialize;
 use tauri::{Manager, State, WebviewWindow};
 
 use crate::dialogs::{self, UnsavedChoice};
-use crate::documents::{DocumentId, Documents, FormatInfo, OpenedDocument};
+use crate::documents::{DocumentId, Documents, FormatInfo, OpenOutcome};
 use crate::error::AppError;
-use crate::startup::StartupFiles;
+use crate::pending::PendingFiles;
 
 /// Сведения о сборке для строки состояния.
 ///
@@ -54,52 +54,32 @@ pub fn app_info() -> AppInfo {
     AppInfo::current()
 }
 
-/// Результат открытия одного файла из командной строки. Ошибка с одним
-/// файлом не должна мешать открыть остальные, поэтому это не `Result`, а
-/// перечисление, которое уходит во фронтенд как `{ status: "opened", … }`
-/// или `{ status: "failed", … }`.
-#[derive(Debug, Serialize)]
-#[serde(tag = "status", rename_all = "camelCase")]
-pub enum StartupDocument {
-    Opened { document: OpenedDocument },
-    Failed { path: String, message: String },
-}
-
-/// Открывает файлы, переданные в командной строке при запуске.
+/// Открывает файлы из очереди: командная строка, повторный запуск программы,
+/// перетаскивание в окно (см. `pending.rs`).
 #[tauri::command]
-pub async fn take_startup_documents(
-    window: WebviewWindow,
-) -> Result<Vec<StartupDocument>, AppError> {
+pub async fn take_pending_documents(window: WebviewWindow) -> Result<Vec<OpenOutcome>, AppError> {
     run_blocking(window, |window, documents| {
-        let paths = window.state::<StartupFiles>().take();
-        let results = paths
-            .iter()
-            .map(|path| match documents.open(path) {
-                Ok(document) => StartupDocument::Opened { document },
-                Err(err) => StartupDocument::Failed {
-                    path: path.display().to_string(),
-                    message: err.to_string(),
-                },
-            })
-            .collect();
-        Ok(results)
+        let paths = window.state::<PendingFiles>().take();
+        Ok(documents.open_all(&paths))
     })
     .await
 }
 
-/// Показывает диалог открытия и открывает выбранный файл.
-/// `None` — пользователь закрыл диалог, ничего не выбрав.
+/// Перечитывает уже открытые документы. Фронтенд вызывает её при загрузке
+/// страницы: если страница перезагрузилась, вкладки восстановятся.
 #[tauri::command]
-pub async fn open_document_dialog(
-    window: WebviewWindow,
-) -> Result<Option<OpenedDocument>, AppError> {
-    run_blocking(
-        window,
-        |window, documents| match dialogs::pick_markdown_file(window) {
-            Some(path) => documents.open(&path).map(Some),
-            None => Ok(None),
-        },
-    )
+pub async fn restore_documents(window: WebviewWindow) -> Result<Vec<OpenOutcome>, AppError> {
+    run_blocking(window, |_, documents| Ok(documents.reopen_all())).await
+}
+
+/// Показывает диалог открытия и открывает выбранные файлы.
+/// Пустой список — пользователь закрыл диалог, ничего не выбрав.
+#[tauri::command]
+pub async fn open_document_dialog(window: WebviewWindow) -> Result<Vec<OpenOutcome>, AppError> {
+    run_blocking(window, |window, documents| {
+        let paths = dialogs::pick_markdown_files(window);
+        Ok(documents.open_all(&paths))
+    })
     .await
 }
 
@@ -131,15 +111,21 @@ pub async fn save_document(
     .await
 }
 
-/// Спрашивает, что делать с несохранёнными изменениями документа.
+/// Спрашивает, что делать с несохранёнными изменениями документов
+/// (одной вкладки или всех при закрытии окна).
 #[tauri::command]
 pub async fn ask_unsaved_changes(
     window: WebviewWindow,
-    id: DocumentId,
+    ids: Vec<DocumentId>,
 ) -> Result<UnsavedChoice, AppError> {
     run_blocking(window, move |window, documents| {
-        let file_name = documents.file_name(id)?;
-        Ok(dialogs::ask_unsaved_changes(window, &file_name))
+        // `collect` в `Result<Vec<_>, _>` останавливается на первой ошибке:
+        // либо все имена, либо ошибка о неизвестном документе.
+        let file_names = ids
+            .iter()
+            .map(|&id| documents.file_name(id))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(dialogs::ask_unsaved_changes(window, &file_names))
     })
     .await
 }
@@ -189,16 +175,5 @@ mod tests {
         assert_eq!(json["tauriVersion"], tauri::VERSION);
         assert_eq!(json["os"], std::env::consts::OS);
         assert!(json.get("tauri_version").is_none());
-    }
-
-    #[test]
-    fn startup_document_is_tagged_by_status() {
-        let failed = StartupDocument::Failed {
-            path: "a.md".into(),
-            message: "нет прав".into(),
-        };
-        let json = serde_json::to_value(failed).unwrap();
-        assert_eq!(json["status"], "failed");
-        assert_eq!(json["message"], "нет прав");
     }
 }

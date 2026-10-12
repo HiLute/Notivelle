@@ -2,13 +2,16 @@ import "./styles.css";
 
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { editorExtensions } from "./editor/setup";
-import { api, errorMessage, type OpenedDocument, type StartupDocument } from "./ipc";
-import { DocumentSession } from "./session";
+import { FILES_PENDING_EVENT, api, errorMessage } from "./ipc";
 import { StatusBar } from "./statusbar";
+import { TabBar } from "./tabbar";
 import welcomeDoc from "./welcome.md?raw";
+import { Workspace } from "./workspace";
 
 function requireElement(id: string): HTMLElement {
   const element = document.getElementById(id);
@@ -25,9 +28,9 @@ function createState(text: string): EditorState {
     extensions: [
       editorExtensions(),
       EditorView.updateListener.of((update) => {
-        // `session` объявлена ниже, но слушатель срабатывает только на
+        // `workspace` объявлена ниже, но слушатель срабатывает только на
         // правки, а они возможны лишь после того, как всё создано.
-        if (update.docChanged) session.handleDocChanged();
+        if (update.docChanged) workspace.handleDocChanged();
         if (update.docChanged || update.selectionSet) statusBar.setCursor(update.state);
       }),
     ],
@@ -35,7 +38,7 @@ function createState(text: string): EditorState {
 }
 
 const view = new EditorView({ parent: requireElement("editor"), state: createState(welcomeDoc) });
-const session = new DocumentSession(view, createState, statusBar);
+const workspace = new Workspace(view, createState, statusBar, new TabBar(requireElement("tabbar")));
 statusBar.setCursor(view.state);
 view.focus();
 
@@ -53,23 +56,43 @@ function shortcutLetter(event: KeyboardEvent): string {
   return event.key.toLowerCase();
 }
 
-// Горячие клавиши приложения. Слушаем на фазе погружения (capture), чтобы
-// получить их раньше редактора.
+/** Действие для сочетания клавиш или null, если это не наше сочетание. */
+function shortcutAction(event: KeyboardEvent): (() => void) | null {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return null;
+
+  switch (event.key) {
+    case "Tab":
+      return () => workspace.activateNext(event.shiftKey ? -1 : 1);
+    case "PageDown":
+      return event.shiftKey ? null : () => workspace.activateNext(1);
+    case "PageUp":
+      return event.shiftKey ? null : () => workspace.activateNext(-1);
+  }
+  if (event.shiftKey) return null;
+
+  switch (shortcutLetter(event)) {
+    case "o":
+      return () => void workspace.openWithDialog();
+    case "s":
+      return () => void workspace.save();
+    case "w":
+      return () => void workspace.closeActive();
+    default:
+      return null;
+  }
+}
+
+// Горячие клавиши приложения перехватываем на фазе погружения (capture),
+// раньше редактора, и дальше не пускаем: иначе, например, Ctrl+Tab ещё и
+// вставил бы табуляцию.
 window.addEventListener(
   "keydown",
   (event) => {
-    const mod = event.ctrlKey || event.metaKey;
-    if (!mod || event.altKey || event.shiftKey) return;
-    switch (shortcutLetter(event)) {
-      case "o":
-        event.preventDefault();
-        void session.openWithDialog();
-        break;
-      case "s":
-        event.preventDefault();
-        void session.save();
-        break;
-    }
+    const action = shortcutAction(event);
+    if (!action) return;
+    event.preventDefault();
+    event.stopPropagation();
+    action();
   },
   { capture: true },
 );
@@ -77,45 +100,36 @@ window.addEventListener(
 // Закрытие окна с несохранёнными изменениями. Если обработчик не вызвал
 // preventDefault, Tauri закрывает окно сам.
 void getCurrentWindow().onCloseRequested(async (event) => {
-  if (!(await session.confirmClose())) event.preventDefault();
+  if (!(await workspace.confirmClose())) event.preventDefault();
 });
 
-void openStartupDocuments();
-void showAppInfo();
+// Подсветка окна, пока над ним держат перетаскиваемые файлы. Сами файлы
+// открывает Rust (lib.rs), а фронтенд получает их через очередь.
+const dropOverlay = requireElement("drop-overlay");
+void getCurrentWebview().onDragDropEvent((event) => {
+  const { type } = event.payload;
+  dropOverlay.hidden = !(type === "enter" || type === "over");
+});
 
-/** Файлы из командной строки: `md-editor note.md`. */
-async function openStartupDocuments(): Promise<void> {
-  let results: StartupDocument[];
+void init();
+
+async function init(): Promise<void> {
+  // Если страница перезагрузилась (при разработке Vite делает это после
+  // правок кода), Rust ещё помнит открытые файлы: возвращаем их вкладки.
   try {
-    results = await api.takeStartupDocuments();
+    workspace.accept(await api.restoreDocuments());
   } catch (error) {
     statusBar.showMessage(errorMessage(error), "error");
-    return;
   }
 
-  const opened = results.flatMap((r) => (r.status === "opened" ? [r.document] : []));
-  const failures = results.flatMap((r) => (r.status === "failed" ? [r.message] : []));
+  // Сначала подписываемся на событие, потом забираем очередь: так не
+  // потеряются файлы, пришедшие между этими двумя шагами.
+  await listen(FILES_PENDING_EVENT, () => void workspace.openPending());
+  await workspace.openPending();
 
-  const [first, ...rest] = opened;
-  if (first) session.show(first);
-  // Вкладок пока нет (они появятся в M2), поэтому показываем только первый
-  // файл, а остальные сразу закрываем, чтобы Rust их не держал.
-  rest.forEach((document: OpenedDocument) => void api.closeDocument(document.id));
-
-  if (failures.length > 0) {
-    statusBar.showMessage(failures.join(" · "), "error");
-  } else if (rest.length > 0) {
-    statusBar.showMessage(`Открыт только первый файл: вкладки появятся позже (ещё ${rest.length})`);
-  }
-}
-
-/** Версия в строке состояния, пока не открыт ни один файл. */
-async function showAppInfo(): Promise<void> {
   try {
     const info = await api.appInfo();
-    if (!session.isDirty && view.state.doc.toString() === welcomeDoc) {
-      statusBar.setFile(`${info.name} ${info.version} · Tauri ${info.tauriVersion} · ${info.os}`);
-    }
+    workspace.welcomeLabel = `${info.name} ${info.version} · Tauri ${info.tauriVersion} · ${info.os}`;
   } catch (error) {
     statusBar.showMessage(`Нет связи с Rust-частью: ${errorMessage(error)}`, "error");
   }

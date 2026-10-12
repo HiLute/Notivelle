@@ -27,9 +27,18 @@ export interface OpenedDocument extends FormatInfo {
   text: string;
 }
 
-export type StartupDocument =
+/** Результат открытия одного файла из пачки (OpenOutcome в documents.rs). */
+export type OpenOutcome =
   | { status: "opened"; document: OpenedDocument }
+  /** Файл уже открыт: достаточно переключиться на его вкладку. */
+  | { status: "alreadyOpen"; id: DocumentId }
   | { status: "failed"; path: string; message: string };
+
+/**
+ * Событие Rust «в очереди появились файлы» (pending.rs): повторный запуск
+ * программы или перетаскивание в окно. Забрать их — api.takePendingDocuments().
+ */
+export const FILES_PENDING_EVENT = "files-pending";
 
 export type UnsavedChoice = "save" | "discard" | "cancel";
 
@@ -64,12 +73,16 @@ export function errorMessage(error: unknown): string {
 
 export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
-  takeStartupDocuments: () => invoke<StartupDocument[]>("take_startup_documents"),
-  /** null — пользователь закрыл диалог, ничего не выбрав. */
-  openDocumentDialog: () => invoke<OpenedDocument | null>("open_document_dialog"),
+  /** Уже открытые в Rust документы, перечитанные с диска (после перезагрузки страницы). */
+  restoreDocuments: () => invoke<OpenOutcome[]>("restore_documents"),
+  /** Файлы из очереди: командная строка, повторный запуск, перетаскивание. */
+  takePendingDocuments: () => invoke<OpenOutcome[]>("take_pending_documents"),
+  /** Пустой список — пользователь закрыл диалог, ничего не выбрав. */
+  openDocumentDialog: () => invoke<OpenOutcome[]>("open_document_dialog"),
   /** null — файл изменили снаружи, и пользователь отказался его перезаписывать. */
   saveDocument: (id: DocumentId, text: string) =>
     invoke<FormatInfo | null>("save_document", { id, text }),
-  askUnsavedChanges: (id: DocumentId) => invoke<UnsavedChoice>("ask_unsaved_changes", { id }),
+  /** Один общий вопрос о несохранённых изменениях в перечисленных документах. */
+  askUnsavedChanges: (ids: DocumentId[]) => invoke<UnsavedChoice>("ask_unsaved_changes", { ids }),
   closeDocument: (id: DocumentId) => invoke<void>("close_document", { id }),
 };
