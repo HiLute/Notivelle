@@ -85,4 +85,11 @@ export const api = {
   /** Один общий вопрос о несохранённых изменениях в перечисленных документах. */
   askUnsavedChanges: (ids: DocumentId[]) => invoke<UnsavedChoice>("ask_unsaved_changes", { ids }),
   closeDocument: (id: DocumentId) => invoke<void>("close_document", { id }),
+  /** HTML для режима чтения, уже очищенный Rust. id — чтобы найти картинки рядом с файлом. */
+  renderMarkdown: (id: DocumentId | null, text: string) =>
+    invoke<string>("render_markdown", { id, text }),
+  /** Открыть ссылку в браузере (только http, https, mailto). */
+  openExternal: (url: string) => invoke<void>("open_external", { url }),
+  /** Открыть во вкладке Markdown-файл по ссылке относительно документа. */
+  openLink: (id: DocumentId, href: string) => invoke<OpenOutcome[]>("open_link", { id, href }),
 };

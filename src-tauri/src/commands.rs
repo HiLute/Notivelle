@@ -12,11 +12,15 @@
 
 use serde::Serialize;
 use tauri::{Manager, State, WebviewWindow};
+use tauri_plugin_opener::OpenerExt;
 
+use crate::assets;
 use crate::dialogs::{self, UnsavedChoice};
+use crate::document;
 use crate::documents::{DocumentId, Documents, FormatInfo, OpenOutcome};
 use crate::error::AppError;
 use crate::pending::PendingFiles;
+use crate::render;
 
 /// Сведения о сборке для строки состояния.
 ///
@@ -126,6 +130,75 @@ pub async fn ask_unsaved_changes(
             .map(|&id| documents.file_name(id))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(dialogs::ask_unsaved_changes(window, &file_names))
+    })
+    .await
+}
+
+/// HTML для режима чтения. `id` нужен, чтобы картинки с относительными путями
+/// искались рядом с документом; у приветственной страницы его нет.
+#[tauri::command]
+pub async fn render_markdown(
+    window: WebviewWindow,
+    id: Option<DocumentId>,
+    text: String,
+) -> Result<String, AppError> {
+    run_blocking(window, move |_, _| {
+        Ok(render::render_html(&text, move |src: &str| {
+            assets::image_url(id, src)
+        }))
+    })
+    .await
+}
+
+/// Открывает внешнюю ссылку в браузере (или почтовой программе).
+/// Разрешены только `http`, `https` и `mailto`: ссылка из чужого документа не
+/// должна запускать на компьютере что попало.
+#[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri передаёт окно в команду только по значению"
+)]
+pub fn open_external(window: WebviewWindow, url: String) -> Result<(), AppError> {
+    let allowed = ["http://", "https://", "mailto:"].iter().any(|prefix| {
+        url.get(..prefix.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
+    });
+    if !allowed {
+        return Err(AppError::Link {
+            href: url,
+            reason: "такие ссылки не открываются из соображений безопасности".to_owned(),
+        });
+    }
+    window
+        .opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|err| AppError::Link {
+            href: url,
+            reason: err.to_string(),
+        })
+}
+
+/// Открывает во вкладке файл по относительной ссылке из документа `id`:
+/// `[план](plan.md)` → `plan.md` рядом с документом. Открываются только
+/// Markdown-файлы.
+#[tauri::command]
+pub async fn open_link(
+    window: WebviewWindow,
+    id: DocumentId,
+    href: String,
+) -> Result<Vec<OpenOutcome>, AppError> {
+    run_blocking(window, move |_, documents| {
+        let link_error = |reason: &str| AppError::Link {
+            href: href.clone(),
+            reason: reason.to_owned(),
+        };
+        let target =
+            assets::local_target(&href).ok_or_else(|| link_error("это не путь к файлу"))?;
+        if !document::is_markdown_path(&target) {
+            return Err(link_error("по ссылкам открываются только Markdown-файлы"));
+        }
+        let path = documents.directory(id)?.join(target);
+        Ok(documents.open_all(&[path]))
     })
     .await
 }

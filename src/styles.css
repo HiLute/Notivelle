@@ -33,6 +33,8 @@
   --search-match: rgb(255 196 0 / 0.35);
   --search-match-border: rgb(204 150 0 / 0.6);
   --search-match-selected: rgb(255 150 0 / 0.5);
+  --code-background: #f2f2f4;
+  --mark-background: rgb(255 208 0 / 0.4);
 
   --code-keyword: #a626a4;
   --code-string: #50a14f;
@@ -52,6 +54,8 @@
     --border: #333333;
     --border-strong: #474747;
     --background-hover: #303030;
+    --code-background: #262626;
+    --mark-background: rgb(255 208 0 / 0.3);
     --text-normal: #dcddde;
     --text-heading: #f2f2f2;
     --text-muted: #a3a3a3;
@@ -259,4 +263,53 @@ body {
 
 .statusbar [data-part="message"][data-kind="error"] {
   color: var(--text-error);
+}
+
+/* ---------- Переключатель режимов ---------- */
+
+.mode-switch {
+  display: flex;
+  flex: none;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+}
+
+.mode-button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.mode-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.mode-button:hover {
+  background: var(--background-hover);
+  color: var(--text-normal);
+}
+
+.mode-button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--background-primary);
+}
+
+.mode-button[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mode-button[aria-disabled="true"]:hover {
+  background: none;
+  color: var(--text-muted);
 }

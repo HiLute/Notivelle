@@ -10,8 +10,24 @@
 //! поэтому его легко покрыть тестами.
 
 use std::borrow::Cow;
+use std::path::Path;
 
 use serde::Serialize;
+
+/// Расширения файлов, которые редактор считает Markdown. Их показывает
+/// диалог открытия, и только такие файлы открываются по ссылкам из текста.
+pub const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mkdn", "mdwn", "txt"];
+
+/// Похож ли файл на Markdown (по расширению, без учёта регистра).
+pub fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            MARKDOWN_EXTENSIONS
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(ext))
+        })
+}
 
 /// Метка порядка байтов (BOM) в начале UTF-8-файла.
 const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];

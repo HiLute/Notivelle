@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="140" viewBox="0 0 480 140" font-family="sans-serif" font-size="15">
+  <rect width="480" height="140" rx="12" fill="#7c4dff" fill-opacity="0.12"/>
+  <g fill="#7c4dff" fill-opacity="0.85">
+    <rect x="24" y="45" width="120" height="50" rx="8"/>
+    <rect x="180" y="45" width="120" height="50" rx="8"/>
+    <rect x="336" y="45" width="120" height="50" rx="8"/>
+  </g>
+  <g fill="#ffffff" text-anchor="middle">
+    <text x="84" y="75">Markdown</text>
+    <text x="240" y="75">Rust</text>
+    <text x="396" y="75">HTML</text>
+  </g>
+  <g stroke="#7c4dff" stroke-width="3">
+    <line x1="146" y1="70" x2="176" y2="70"/>
+    <line x1="302" y1="70" x2="332" y2="70"/>
+  </g>
+</svg>

@@ -26,6 +26,10 @@ thiserror = "2.0.21"
 tempfile = "3.27.0"
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
+comrak = { version = "0.56.0", default-features = false }
+ammonia = "4.2.3"
+percent-encoding = "2.3.2"
+tauri-plugin-opener = "2"
 
 [dev-dependencies]
 proptest = "1.12.0"

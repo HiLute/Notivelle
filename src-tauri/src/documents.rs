@@ -29,9 +29,25 @@ use crate::error::AppError;
 #[serde(transparent)]
 pub struct DocumentId(u64);
 
+impl DocumentId {
+    /// Число внутри — например, для адреса картинки `mdimg://localhost/<id>/…`.
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
 impl fmt::Display for DocumentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "#{}", self.0)
+    }
+}
+
+/// Разбор из строки: `"7".parse::<DocumentId>()`. Нужен протоколу картинок.
+impl std::str::FromStr for DocumentId {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse().map(Self)
     }
 }
 
@@ -275,6 +291,14 @@ impl Documents {
         self.lock()
             .get(&id)
             .map(|entry| display_name(&entry.path))
+            .ok_or(AppError::UnknownDocument(id))
+    }
+
+    /// Папка документа: от неё считаются относительные пути картинок и ссылок.
+    pub fn directory(&self, id: DocumentId) -> Result<PathBuf, AppError> {
+        self.lock()
+            .get(&id)
+            .map(|entry| entry.path.parent().unwrap_or(&entry.path).to_owned())
             .ok_or(AppError::UnknownDocument(id))
     }
 

@@ -16,10 +16,8 @@ use tauri_plugin_dialog::{
     DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult,
 };
 
+use crate::document::MARKDOWN_EXTENSIONS;
 use crate::error::AppError;
-
-/// Расширения, которые показывает диалог открытия.
-const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mkdn", "mdwn", "txt"];
 
 const SAVE: &str = "Сохранить";
 const DISCARD: &str = "Не сохранять";

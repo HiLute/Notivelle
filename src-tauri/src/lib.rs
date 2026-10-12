@@ -9,10 +9,15 @@
 //! - `disk` — чтение и атомарная запись файлов;
 //! - `documents` — реестр открытых документов;
 //! - `pending` — очередь файлов на открытие (аргументы, второй запуск, перетаскивание);
+//! - `render` — Markdown → безопасный HTML для режима чтения;
+//! - `callouts` — типы и разбор callouts в стиле Obsidian;
+//! - `assets` — протокол `mdimg://` для локальных картинок, пути из ссылок;
 //! - `dialogs` — системные диалоги;
 //! - `commands` — команды для фронтенда;
 //! - `error` — общий тип ошибки.
 
+mod assets;
+mod callouts;
 mod commands;
 mod dialogs;
 mod disk;
@@ -20,6 +25,7 @@ mod document;
 mod documents;
 mod error;
 mod pending;
+mod render;
 
 use std::path::Path;
 
@@ -50,6 +56,20 @@ pub fn run() -> tauri::Result<()> {
             pending::focus_main_window(app);
         }))
         .plugin(tauri_plugin_dialog::init())
+        // Открытие ссылок в браузере (команда `open_external`). Фронтенду
+        // прав на него не выдаём: он просит Rust, а Rust проверяет адрес.
+        .plugin(tauri_plugin_opener::init())
+        // Протокол для локальных картинок в режиме чтения (`assets.rs`).
+        // Чтение файла — в отдельном потоке, чтобы не тормозить интерфейс.
+        .register_asynchronous_uri_scheme_protocol(
+            assets::IMAGE_SCHEME,
+            |ctx, request, responder| {
+                let app = ctx.app_handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    responder.respond(assets::handle(&app, &request));
+                });
+            },
+        )
         // Общее состояние приложения: команды получают его через
         // `State<'_, T>` или `window.state::<T>()`.
         .manage(Documents::default())
@@ -85,6 +105,9 @@ pub fn run() -> tauri::Result<()> {
             commands::save_document,
             commands::ask_unsaved_changes,
             commands::close_document,
+            commands::render_markdown,
+            commands::open_external,
+            commands::open_link,
         ])
         .run(tauri::generate_context!())
 }

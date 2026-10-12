@@ -2,7 +2,10 @@ import type { EditorState, Text } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { scrollToLine, topVisibleLine } from "./editor/scroll";
 import { api, errorMessage, type DocumentId, type FormatInfo, type OpenOutcome, type OpenedDocument } from "./ipc";
+import { LIVE_PREVIEW_READY, type EditingMode, type ViewMode } from "./modes";
+import type { ReadingView } from "./reading/view";
 import type { StatusBar } from "./statusbar";
 import type { TabBar } from "./tabbar";
 
@@ -10,8 +13,26 @@ const APP_TITLE = "md-editor";
 
 type ScrollSnapshot = ReturnType<EditorView["scrollSnapshot"]>;
 
+/** HTML режима чтения и текст, из которого он получен. */
+interface Rendered {
+  /** Text неизменяемый: если документ правили, это будет уже другой объект. */
+  doc: Text;
+  html: string;
+}
+
+/** Что показано на странице: редактор или режим чтения. Есть у каждой
+ *  вкладки и у приветственной страницы. */
+interface Page {
+  mode: ViewMode;
+  /** Последний режим редактирования: в него Ctrl+E возвращается из чтения. */
+  editingMode: EditingMode;
+  rendered: Rendered | null;
+  /** Строка исходника вверху режима чтения — чтобы вернуться на то же место. */
+  readingLine: number | null;
+}
+
 /** Вкладка с открытым файлом. */
-interface Tab {
+interface Tab extends Page {
   readonly id: DocumentId;
   readonly path: string;
   readonly fileName: string;
@@ -22,27 +43,46 @@ interface Tab {
    * ухода с неё.
    */
   state: EditorState;
-  /** Позиция прокрутки на момент ухода с вкладки. */
+  /** Позиция прокрутки редактора на момент ухода с вкладки. */
   scroll: ScrollSnapshot | null;
   /** Текст на момент открытия или последнего сохранения. */
   savedDoc: Text;
 }
 
+export interface WorkspaceParts {
+  view: EditorView;
+  /** Элемент, в котором живёт редактор: его прячем в режиме чтения. */
+  editorHost: HTMLElement;
+  createState: (text: string) => EditorState;
+  reading: ReadingView;
+  statusBar: StatusBar;
+  tabBar: TabBar;
+}
+
 /**
  * Открытые файлы во вкладках. Редактор (EditorView) один: при переключении
  * вкладок в него подставляется EditorState нужного файла, поэтому у каждого
- * файла своя история отмены, позиция курсора и прокрутка. Когда вкладок
- * нет, показывается приветственная страница.
+ * файла своя история отмены, позиция курсора и прокрутка. У каждой вкладки
+ * свой режим: редактор или чтение (Ctrl+E). Когда вкладок нет, показывается
+ * приветственная страница.
  */
 export class Workspace {
   readonly #view: EditorView;
+  readonly #editorHost: HTMLElement;
   readonly #createState: (text: string) => EditorState;
+  readonly #reading: ReadingView;
   readonly #statusBar: StatusBar;
   readonly #tabBar: TabBar;
   #tabs: Tab[] = [];
   #active: Tab | null = null;
-  /** Приветственная страница; хранится, пока открыта какая-нибудь вкладка. */
+  /** Приветственная страница; её состояние хранится, пока открыта вкладка. */
   #welcome: EditorState;
+  readonly #welcomePage: Page = {
+    mode: "source",
+    editingMode: "source",
+    rendered: null,
+    readingLine: null,
+  };
   #welcomeLabel = "Приветственная страница";
   /** Идёт операция с диалогом: вторую параллельно не запускаем. */
   #busy = false;
@@ -53,19 +93,16 @@ export class Workspace {
    */
   #activeDirty = false;
 
-  constructor(
-    view: EditorView,
-    createState: (text: string) => EditorState,
-    statusBar: StatusBar,
-    tabBar: TabBar,
-  ) {
-    this.#view = view;
-    this.#createState = createState;
-    this.#statusBar = statusBar;
-    this.#tabBar = tabBar;
-    this.#welcome = view.state;
-    tabBar.onActivate = (id) => this.activate(id);
-    tabBar.onClose = (id) => void this.close(id);
+  constructor(parts: WorkspaceParts) {
+    this.#view = parts.view;
+    this.#editorHost = parts.editorHost;
+    this.#createState = parts.createState;
+    this.#reading = parts.reading;
+    this.#statusBar = parts.statusBar;
+    this.#tabBar = parts.tabBar;
+    this.#welcome = parts.view.state;
+    parts.tabBar.onActivate = (id) => this.activate(id);
+    parts.tabBar.onClose = (id) => void this.close(id);
     this.#refresh();
   }
 
@@ -129,7 +166,7 @@ export class Workspace {
     const tab = this.#tabs.find((candidate) => candidate.id === id);
     if (!tab) return;
     if (tab === this.#active) {
-      this.#view.focus();
+      this.#focusContent();
       return;
     }
     this.#stashActive();
@@ -143,6 +180,41 @@ export class Workspace {
     const index = this.#tabs.indexOf(this.#active);
     const next = this.#tabs[(index + step + count) % count];
     if (next) this.activate(next.id);
+  }
+
+  /**
+   * Переключает режим текущей страницы, сохраняя место в тексте: что было
+   * вверху экрана, останется вверху и в другом режиме.
+   */
+  setMode(mode: ViewMode): void {
+    const page = this.#page();
+    if (mode === page.mode) {
+      this.#focusContent();
+      return;
+    }
+    if (mode === "live" && !LIVE_PREVIEW_READY) {
+      this.#statusBar.showMessage("Режим Live Preview появится на этапе M4");
+      return;
+    }
+
+    if (mode === "reading") {
+      page.readingLine = topVisibleLine(this.#view);
+      page.mode = "reading";
+      void this.#applyMode();
+    } else {
+      const line = page.mode === "reading" ? this.#reading.topSourceLine() : null;
+      page.mode = mode;
+      page.editingMode = mode;
+      this.#showEditor();
+      if (line !== null) scrollToLine(this.#view, line);
+    }
+    this.#refresh();
+  }
+
+  /** Ctrl+E: чтение ⇄ последний режим редактирования, как в Obsidian. */
+  toggleReading(): void {
+    const page = this.#page();
+    this.setMode(page.mode === "reading" ? page.editingMode : "reading");
   }
 
   /** Ctrl+O: диалог открытия, можно выбрать несколько файлов. */
@@ -160,6 +232,28 @@ export class Workspace {
   async openPending(): Promise<void> {
     try {
       this.accept(await api.takePendingDocuments());
+    } catch (error) {
+      this.#statusBar.showMessage(errorMessage(error), "error");
+    }
+  }
+
+  /** Ссылка из режима чтения на файл рядом с документом. */
+  async openLink(href: string): Promise<void> {
+    if (!this.#active) {
+      this.#statusBar.showMessage("Ссылки на файлы работают в открытом файле");
+      return;
+    }
+    try {
+      this.accept(await api.openLink(this.#active.id, href));
+    } catch (error) {
+      this.#statusBar.showMessage(errorMessage(error), "error");
+    }
+  }
+
+  /** Внешняя ссылка из режима чтения: откроется в браузере. */
+  async openExternal(url: string): Promise<void> {
+    try {
+      await api.openExternal(url);
     } catch (error) {
       this.#statusBar.showMessage(errorMessage(error), "error");
     }
@@ -239,11 +333,22 @@ export class Workspace {
       state,
       scroll: null,
       savedDoc: state.doc,
+      mode: "source",
+      editingMode: "source",
+      rendered: null,
+      readingLine: null,
     };
   }
 
-  /** Запоминает состояние текущей вкладки (или приветственной страницы). */
+  /** Текущая страница: активная вкладка или приветственная. */
+  #page(): Page {
+    return this.#active ?? this.#welcomePage;
+  }
+
+  /** Запоминает состояние текущей страницы перед уходом с неё. */
   #stashActive(): void {
+    const page = this.#page();
+    if (page.mode === "reading") page.readingLine = this.#reading.topSourceLine();
     if (this.#active) {
       this.#active.state = this.#view.state;
       this.#active.scroll = this.#view.scrollSnapshot();
@@ -260,7 +365,61 @@ export class Workspace {
     this.#activeDirty = tab !== null && this.#isDirty(tab);
     this.#statusBar.setCursor(this.#view.state);
     this.#refresh();
+    void this.#applyMode();
+  }
+
+  /**
+   * Показывает редактор или режим чтения — как задано у текущей страницы.
+   * HTML для чтения рендерит Rust; пока текст не менялся, берётся готовый.
+   */
+  async #applyMode(): Promise<void> {
+    const page = this.#page();
+    if (page.mode !== "reading") {
+      this.#showEditor();
+      return;
+    }
+
+    const doc = this.#view.state.doc;
+    let html = page.rendered?.doc === doc ? page.rendered.html : null;
+    if (html === null) {
+      try {
+        html = await api.renderMarkdown(this.#active?.id ?? null, doc.toString());
+      } catch (error) {
+        this.#statusBar.showMessage(errorMessage(error), "error");
+        page.mode = "source";
+        this.#showEditor();
+        this.#refresh();
+        return;
+      }
+      // Пока Rust рендерил, пользователь мог переключить вкладку или режим.
+      if (this.#page() !== page || page.mode !== "reading") return;
+      page.rendered = { doc, html };
+    }
+
+    this.#editorHost.hidden = true;
+    // show() вставляет HTML сразу, а формулы, код и диаграммы дорисовывает
+    // асинхронно. Прокручиваем к нужному месту и сразу, и после дорисовки:
+    // диаграммы меняют высоту блоков.
+    const drawn = this.#reading.show(html);
+    const line = page.readingLine;
+    if (line !== null) this.#reading.scrollToSourceLine(line);
+    this.#reading.focus();
+    await drawn;
+    if (line !== null && this.#page() === page && page.mode === "reading") {
+      this.#reading.scrollToSourceLine(line);
+    }
+  }
+
+  #showEditor(): void {
+    this.#reading.hide();
+    this.#editorHost.hidden = false;
+    this.#view.requestMeasure();
     this.#view.focus();
+  }
+
+  #focusContent(): void {
+    if (this.#page().mode === "reading") this.#reading.focus();
+    else this.#view.focus();
   }
 
   #removeTab(tab: Tab): void {
@@ -331,6 +490,7 @@ export class Workspace {
     const tab = this.#active;
     this.#statusBar.setFile(tab ? tab.path : this.#welcomeLabel, tab?.path);
     this.#statusBar.setFormat(tab?.format ?? null);
+    this.#statusBar.setMode(this.#page().mode);
 
     const title = tab ? `${this.#activeDirty ? "● " : ""}${tab.fileName} — ${APP_TITLE}` : APP_TITLE;
     // Заголовок меняется через IPC, поэтому дёргаем его только при изменении.

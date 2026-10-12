@@ -49,6 +49,9 @@ pub enum AppError {
     #[error("Документ {0} не открыт")]
     UnknownDocument(DocumentId),
 
+    #[error("Не удалось открыть ссылку «{href}»: {reason}")]
+    Link { href: String, reason: String },
+
     #[error("Внутренняя ошибка: {0}")]
     Internal(String),
 }
@@ -66,6 +69,7 @@ impl AppError {
             Self::ModifiedOnDisk { .. } => "modifiedOnDisk",
             Self::MissingOnDisk { .. } => "missingOnDisk",
             Self::UnknownDocument(_) => "unknownDocument",
+            Self::Link { .. } => "link",
             Self::Internal(_) => "internal",
         }
     }

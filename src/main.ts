@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { runEditorKeymapInLatin } from "./editor/layout-keys";
 import { editorExtensions } from "./editor/setup";
 import { FILES_PENDING_EVENT, api, errorMessage } from "./ipc";
+import { ReadingView } from "./reading/view";
 import { StatusBar } from "./statusbar";
 import { TabBar } from "./tabbar";
 import welcomeDoc from "./welcome.md?raw";
@@ -38,8 +39,21 @@ function createState(text: string): EditorState {
   });
 }
 
-const view = new EditorView({ parent: requireElement("editor"), state: createState(welcomeDoc) });
-const workspace = new Workspace(view, createState, statusBar, new TabBar(requireElement("tabbar")));
+const editorHost = requireElement("editor");
+const view = new EditorView({ parent: editorHost, state: createState(welcomeDoc) });
+const reading = new ReadingView(requireElement("reading"), {
+  openExternal: (url) => void workspace.openExternal(url),
+  openLocal: (href) => void workspace.openLink(href),
+});
+const workspace = new Workspace({
+  view,
+  editorHost,
+  createState,
+  reading,
+  statusBar,
+  tabBar: new TabBar(requireElement("tabbar")),
+});
+statusBar.onModeChange = (mode) => workspace.setMode(mode);
 statusBar.setCursor(view.state);
 view.focus();
 
@@ -78,6 +92,8 @@ function shortcutAction(event: KeyboardEvent): (() => void) | null {
       return () => void workspace.save();
     case "w":
       return () => void workspace.closeActive();
+    case "e":
+      return () => workspace.toggleReading();
     default:
       return null;
   }
