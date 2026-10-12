@@ -143,7 +143,24 @@ pub fn run() -> tauri::Result<()> {
             commands::save_settings,
             commands::list_fonts,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())?
+        .run(|app, event| {
+            // macOS передаёт файлы, открытые из Finder (двойной клик,
+            // «Открыть с помощью»), не аргументами командной строки, а
+            // событием — и при запуске, и когда программа уже открыта. На
+            // других системах этого события нет.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = event {
+                let paths = urls
+                    .into_iter()
+                    .filter_map(|url| url.to_file_path().ok())
+                    .collect();
+                pending::enqueue(app, paths);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
+    Ok(())
 }
 
 /// Переносит настройки и личный словарь из каталога, который был у программы

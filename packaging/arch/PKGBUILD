@@ -13,8 +13,7 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc='Obsidian-like Markdown editor for standalone files'
 arch=('x86_64')
-# Лицензия у проекта пока не выбрана.
-license=('LicenseRef-custom')
+license=('MIT')
 # Библиотеки, с которыми слинкован бинарник (readelf -d … | grep NEEDED).
 depends=(
   'cairo'
@@ -37,11 +36,16 @@ options=('!lto' '!debug')
 source=("$pkgname::git+file://${startdir%/packaging/arch}")
 sha256sums=('SKIP')
 
-# Версия из Cargo.toml плюс номер и хеш коммита: 0.1.0.r12.1a2b3c4. После
-# нового коммита пакет получает версию больше, и pacman видит обновление.
+# На теге релиза (v0.1.0) версия — 0.1.0. Между релизами — версия из
+# Cargo.toml плюс номер и хеш коммита: 0.1.0.r12.1a2b3c4. pacman считает её
+# новее 0.1.0 и старше 0.1.1, так что обновления идут по порядку.
 pkgver() {
   cd "$pkgname"
-  local version
+  local tag version
+  if tag=$(git describe --tags --exact-match --match 'v*' 2> /dev/null); then
+    printf '%s' "${tag#v}"
+    return
+  fi
   version=$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -n 1)
   printf '%s.r%s.%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
@@ -74,7 +78,8 @@ package() {
   install -Dm644 src-tauri/icons/source/notivelle.svg "$icons/scalable/apps/$pkgname.svg"
   install -Dm644 src-tauri/icons/128x128@2x.png "$icons/256x256/apps/$pkgname.png"
   install -Dm644 src-tauri/icons/icon.png "$icons/512x512/apps/$pkgname.png"
-  # Лицензии словарей орфографии, вшитых в программу.
-  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname/" \
+  # Лицензия программы и словарей орфографии, вшитых в неё.
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname/dictionaries/" \
     src-tauri/dictionaries/*.LICENSE src-tauri/dictionaries/README.md
 }

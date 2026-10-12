@@ -189,6 +189,10 @@ fn sync_parent_dir(target: &Path) -> io::Result<()> {
 
 /// На Windows папку нельзя открыть как файл, поэтому этот шаг пропускаем.
 #[cfg(not(unix))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "та же сигнатура, что у версии для Unix: вызывающему коду всё равно"
+)]
 fn sync_parent_dir(_target: &Path) -> io::Result<()> {
     Ok(())
 }

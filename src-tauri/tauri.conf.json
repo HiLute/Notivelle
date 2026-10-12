@@ -47,8 +47,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "rpm"],
+    "targets": "all",
     "category": "Productivity",
+    "copyright": "Copyright (c) 2026 HiLute. MIT License.",
     "shortDescription": "Markdown editor for standalone files",
     "longDescription": "Obsidian-like Markdown editor for standalone files: Live Preview, Reading and Source modes, callouts, KaTeX math, Mermaid diagrams and spellcheck.",
     "icon": [
@@ -66,10 +67,6 @@
         "mimeType": "text/markdown",
         "role": "Editor"
       }
-    ],
-    "linux": {
-      "deb": { "desktopTemplate": "linux/notivelle.desktop" },
-      "rpm": { "desktopTemplate": "linux/notivelle.desktop" }
-    }
+    ]
   }
 }

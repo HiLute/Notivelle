@@ -1,0 +1,162 @@
+# Релиз: тег v0.1.0 → GitHub Release с установщиками для Windows (NSIS и
+# MSI), macOS (универсальный DMG: Apple Silicon и Intel) и пакетом для Arch
+# Linux (.pkg.tar.zst).
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Ручной запуск (Actions → Release → Run workflow) собирает всё то же самое,
+# но релиз не создаёт: файлы остаются в артефактах запуска. Так конвейер
+# можно проверить до первого тега.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  draft:
+    name: Черновик релиза
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    outputs:
+      release-id: ${{ steps.create.outputs.release-id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Тег совпадает с версией в Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -n 1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Тег $GITHUB_REF_NAME, а в src-tauri/Cargo.toml версия $version"
+            exit 1
+          fi
+
+      - name: Создать черновик
+        id: create
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "Notivelle ${GITHUB_REF_NAME#v}" \
+            --notes-file .github/release-notes.md
+          # Черновик не найти по тегу (у него ещё нет страницы), поэтому id
+          # ищем в списке релизов.
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+            --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n 1)
+          echo "release-id=$id" >> "$GITHUB_OUTPUT"
+
+  desktop:
+    name: Сборка (${{ matrix.name }})
+    needs: draft
+    # Черновика нет при ручном запуске — собираем всё равно.
+    if: ${{ !cancelled() && needs.draft.result != 'failure' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            rust-targets: ''
+            args: ''
+          - name: macOS
+            os: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Зависимости фронтенда
+        run: npm ci
+
+      # Собирает фронтенд и программу, пакует установщики и загружает их в
+      # черновик релиза. Без releaseId (ручной запуск) только собирает.
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ needs.draft.outputs.release-id }}
+          args: ${{ matrix.args }}
+          uploadWorkflowArtifacts: true
+
+  arch:
+    name: Сборка (Arch Linux)
+    needs: draft
+    if: ${{ !cancelled() && needs.draft.result != 'failure' }}
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      # git нужен до checkout: иначе он скачает архив без истории, а версия
+      # пакета считается по коммитам и тегам. Песочница загрузок pacman 7
+      # (landlock) в контейнере Docker может не работать — отключаем её.
+      - name: Пакеты для сборки
+        run: |
+          sed -i 's/^#DisableSandbox/DisableSandbox/' /etc/pacman.conf
+          pacman -Syu --noconfirm --needed \
+            git rust nodejs npm \
+            cairo dbus gdk-pixbuf2 glib2 gtk3 libsoup3 webkit2gtk-4.1 \
+            hicolor-icon-theme xdg-utils
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # makepkg не работает от root. PKGBUILD берёт исходники из этого же
+      # репозитория (git+file), поэтому HEAD должен быть веткой, а не
+      # отдельным коммитом тега.
+      - name: makepkg
+        run: |
+          useradd --create-home builder
+          chown -R builder: "$GITHUB_WORKSPACE"
+          runuser -l builder -c "cd '$GITHUB_WORKSPACE' && git checkout -B release"
+          runuser -l builder -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg --noconfirm"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-linux
+          path: packaging/arch/*.pkg.tar.zst
+          if-no-files-found: error
+
+  publish:
+    name: Публикация
+    needs: [draft, desktop, arch]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: arch-linux
+          path: arch
+
+      - name: Пакет Arch в релиз, черновик — в опубликованные
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" arch/*.pkg.tar.zst \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false \
+            --repo "$GITHUB_REPOSITORY"

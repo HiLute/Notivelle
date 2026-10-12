@@ -1,5 +1,8 @@
 # Сборка и установка Notivelle
 
+Готовые сборки для Windows, macOS и Arch Linux — на странице GitHub Releases
+(как их выпустить — в конце файла).
+
 ## Arch Linux и Omarchy
 
 ```sh
@@ -50,6 +53,35 @@ xdg-mime default Notivelle.desktop text/markdown
 Проверка: `xdg-mime query default text/markdown`. Настройка пишется в
 `~/.config/mimeapps.list`; вернуть прежнюю программу — той же командой с её
 `.desktop`-файлом.
+
+## Выпуск релиза (GitHub Actions)
+
+- `.github/workflows/ci.yml` — на каждый push в `main` и pull request:
+  `npm run build` и `npm run check` (tsc, rustfmt, clippy, тесты) на Linux,
+  Windows и macOS.
+- `.github/workflows/release.yml` — по тегу `v*`:
+  1. проверяет, что тег совпадает с версией в `src-tauri/Cargo.toml`, и
+     создаёт черновик релиза с текстом из `.github/release-notes.md`;
+  2. собирает установщики Windows (NSIS `setup.exe` и MSI) и универсальный
+     DMG для macOS (`tauri-action`);
+  3. собирает пакет Arch (`makepkg` в контейнере `archlinux:base-devel`);
+  4. загружает всё в релиз и публикует его.
+
+Выпустить версию:
+
+```sh
+# версия в src-tauri/Cargo.toml (и package.json) уже 0.1.0
+git tag v0.1.0
+git push origin main v0.1.0
+```
+
+Проверить сборки без релиза: Actions → Release → Run workflow. Файлы
+останутся в артефактах запуска.
+
+Сборки не подписаны: Windows SmartScreen предупредит при запуске
+установщика, а macOS может назвать программу повреждённой — лечится
+`xattr -cr /Applications/Notivelle.app`. Для подписи нужны сертификаты
+(Apple Developer, Windows code signing).
 
 ## Где программа хранит данные
 

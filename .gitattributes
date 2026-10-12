@@ -1,2 +1,7 @@
+# Текстовые файлы — всегда с LF, и на Windows тоже. Иначе git на Windows
+# (core.autocrlf) выдал бы их с CRLF, и словари Hunspell, вшитые в программу
+# через include_str!, разбирались бы с «\r» на конце каждого слова.
+* text=auto eol=lf
+
 # Словари большие и меняются только целиком: построчные диффы не нужны.
 src-tauri/dictionaries/*.dic -diff
