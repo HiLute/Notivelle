@@ -1,5 +1,5 @@
 //! Настройки программы: `settings.toml` в каталоге конфигурации (на Linux
-//! `~/.config/dev.maksim.md-editor/settings.toml`).
+//! `~/.config/dev.maksim.notivelle/settings.toml`).
 //!
 //! Файл читается при запуске и переписывается, когда пользователь меняет
 //! настройки в панели. Его можно править и руками: ключей, которых нет,
@@ -21,7 +21,7 @@ const FONT_SIZES: std::ops::RangeInclusive<u8> = 10..=32;
 
 /// Комментарий в начале файла: TOML-сериализатор комментариев не пишет.
 const HEADER: &str = "\
-# Настройки md-editor. Их можно менять в панели настроек (Ctrl+,) или здесь.
+# Настройки Notivelle. Их можно менять в панели настроек (Ctrl+,) или здесь.
 # theme: \"system\", \"light\" или \"dark\"
 # default_mode: режим новых вкладок — \"live\", \"source\" или \"reading\"
 # interface_font, text_font, monospace_font: шрифт интерфейса, текста и кода.
@@ -340,7 +340,7 @@ mod tests {
             }
         );
         let text = fs::read_to_string(&path).unwrap();
-        assert!(text.starts_with("# Настройки md-editor"), "{text}");
+        assert!(text.starts_with("# Настройки Notivelle"), "{text}");
         assert!(text.contains("default_mode = \"source\""), "{text}");
         assert!(text.contains("text_font = \"Literata, serif\""), "{text}");
     }

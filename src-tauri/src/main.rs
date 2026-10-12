@@ -3,18 +3,41 @@
 
 use std::process::ExitCode;
 
-/// Точка входа бинарника. Вся логика живёт в библиотеке `md_editor_lib`,
-/// здесь только превращаем ошибку запуска в понятное сообщение и код выхода
-/// вместо паники.
+use notivelle_lib::cli::{self, Action};
+
+/// Точка входа бинарника. Вся логика живёт в библиотеке `notivelle_lib`,
+/// здесь только командная строка и превращение ошибки запуска в понятное
+/// сообщение и код выхода вместо паники.
 fn main() -> ExitCode {
-    // Должно выполниться первым, пока в процессе нет других потоков.
+    // `--help` и `--version` печатают текст и выходят, окна не будет.
+    match cli::action(std::env::args_os().skip(1)) {
+        Action::Help => {
+            print!("{}", cli::help());
+            return ExitCode::SUCCESS;
+        }
+        Action::Version => {
+            println!("{}", cli::version());
+            return ExitCode::SUCCESS;
+        }
+        Action::Run => {}
+    }
+
+    // Должно выполниться до запуска других потоков (разбор аргументов
+    // выше потоков не создаёт).
     #[cfg(target_os = "linux")]
     disable_webkit_dmabuf_renderer();
 
-    match md_editor_lib::run() {
+    // Запуск из терминала: программа продолжит работу в фоне, отдельным
+    // процессом, а этот освободит терминал.
+    #[cfg(unix)]
+    if cli::relaunch_in_background() {
+        return ExitCode::SUCCESS;
+    }
+
+    match notivelle_lib::run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("md-editor: не удалось запустить приложение: {err}");
+            eprintln!("notivelle: не удалось запустить приложение: {err}");
             ExitCode::FAILURE
         }
     }

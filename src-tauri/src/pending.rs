@@ -10,7 +10,7 @@
 //! как фронтенд успел подписаться, теряется. Очередь не теряется — при
 //! старте фронтенд забирает её в любом случае.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -52,10 +52,15 @@ impl PendingFiles {
 ///
 /// - Относительные пути считаются от `cwd` — рабочей папки того процесса,
 ///   который получил аргументы. Для второго экземпляра это его папка, а не
-///   наша: `md-editor note.md`, запущенный из `~/notes`, должен открыть
+///   наша: `notivelle note.md`, запущенный из `~/notes`, должен открыть
 ///   `~/notes/note.md`.
 /// - Аргументы вида `file:///home/user/a%20b.md` (так их передают некоторые
 ///   файловые менеджеры) превращаются в обычные пути.
+/// - Параметры (`--help`, `-V` и любые другие с дефиса) — не файлы. После
+///   `--` параметров нет, там только файлы.
+/// - Путь с пробелами без кавычек оболочка разрезает на части:
+///   `notivelle Без названия.md` даёт аргументы `Без` и `названия.md`. Если
+///   такого файла нет, а склеенный через пробел путь есть — берём его.
 ///
 /// Аргументы принимаются как `OsString`, а не `String`: путь в Linux — это
 /// просто байты, он не обязан быть корректным UTF-8.
@@ -64,14 +69,78 @@ where
     I: IntoIterator,
     I::Item: Into<OsString>,
 {
+    resolve_paths(&file_arguments(args), cwd, Path::exists)
+}
+
+/// Аргументы-файлы: без пустых и без параметров.
+fn file_arguments<I>(args: I) -> Vec<OsString>
+where
+    I: IntoIterator,
+    I::Item: Into<OsString>,
+{
+    let mut options_ended = false;
     args.into_iter()
         .map(Into::into)
-        .filter(|arg| !arg.is_empty())
-        .map(|arg| file_url_to_path(&arg).unwrap_or_else(|| cwd.join(arg)))
+        .filter(|arg| {
+            if arg.is_empty() {
+                return false;
+            }
+            if options_ended {
+                return true;
+            }
+            if arg == "--" {
+                options_ended = true;
+                return false;
+            }
+            // Одиночный «-» — не параметр, а файл с таким именем.
+            !(arg.as_encoded_bytes().starts_with(b"-") && arg != "-")
+        })
         .collect()
 }
 
-fn file_url_to_path(arg: &OsString) -> Option<PathBuf> {
+/// Аргументы → пути. `exists` проверяет, есть ли файл: в тестах её
+/// подменяют, чтобы не создавать файлы на диске.
+fn resolve_paths(args: &[OsString], cwd: &Path, exists: impl Fn(&Path) -> bool) -> Vec<PathBuf> {
+    let resolve = |arg: &OsStr| file_url_to_path(arg).unwrap_or_else(|| cwd.join(arg));
+    let mut paths = Vec::with_capacity(args.len());
+    // `rest` — ещё не разобранные аргументы. Срез сдвигается вперёд на столько
+    // аргументов, сколько ушло в очередной путь.
+    let mut rest = args;
+    while let Some((first, tail)) = rest.split_first() {
+        let single = resolve(first);
+        let (path, used) = if exists(&single) {
+            (single, 0)
+        } else {
+            rejoined(first, tail, resolve, &exists).unwrap_or((single, 0))
+        };
+        paths.push(path);
+        rest = &tail[used..];
+    }
+    paths
+}
+
+/// Склеивает `first` через пробел с одним, двумя, … следующими аргументами,
+/// пока не получится существующий файл. Возвращает его и сколько аргументов
+/// из `tail` ушло в путь.
+fn rejoined(
+    first: &OsStr,
+    tail: &[OsString],
+    resolve: impl Fn(&OsStr) -> PathBuf,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<(PathBuf, usize)> {
+    let mut joined = first.to_os_string();
+    for (index, part) in tail.iter().enumerate() {
+        joined.push(" ");
+        joined.push(part);
+        let path = resolve(&joined);
+        if exists(&path) {
+            return Some((path, index + 1));
+        }
+    }
+    None
+}
+
+fn file_url_to_path(arg: &OsStr) -> Option<PathBuf> {
     let text = arg.to_str()?;
     if !text.starts_with("file://") {
         return None;
@@ -131,6 +200,72 @@ mod tests {
                 PathBuf::from("/home/user/notes/note.md"),
                 PathBuf::from("/abs/todo.md"),
             ]
+        );
+    }
+
+    #[test]
+    fn options_are_not_files() {
+        let paths = paths_from_args(
+            ["--color", "-", "a.md", "--", "-b.md", "--help"],
+            Path::new("/n"),
+        );
+        assert_eq!(
+            paths,
+            [
+                PathBuf::from("/n/-"),
+                PathBuf::from("/n/a.md"),
+                PathBuf::from("/n/-b.md"),
+                PathBuf::from("/n/--help"),
+            ]
+        );
+    }
+
+    /// `exists` для тестов: есть только перечисленные файлы.
+    fn only(files: &'static [&'static str]) -> impl Fn(&Path) -> bool {
+        move |path| files.iter().any(|file| path == Path::new(file))
+    }
+
+    fn args(items: &[&str]) -> Vec<OsString> {
+        items.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn path_split_by_spaces_is_put_back_together() {
+        let paths = resolve_paths(
+            &args(&["/s/Без", "названия.md", "x.md"]),
+            Path::new("/"),
+            only(&["/s/Без названия.md", "/x.md"]),
+        );
+        assert_eq!(
+            paths,
+            [PathBuf::from("/s/Без названия.md"), PathBuf::from("/x.md")]
+        );
+    }
+
+    #[test]
+    fn three_parts_and_relative_paths_are_joined_too() {
+        let paths = resolve_paths(
+            &args(&["мой", "большой", "план.md"]),
+            Path::new("/home/u"),
+            only(&["/home/u/мой большой план.md"]),
+        );
+        assert_eq!(paths, [PathBuf::from("/home/u/мой большой план.md")]);
+    }
+
+    #[test]
+    fn existing_parts_are_not_joined_and_missing_stay_as_is() {
+        // Оба файла есть — это два файла, а не один с пробелом.
+        let both = resolve_paths(
+            &args(&["a", "b.md"]),
+            Path::new("/"),
+            only(&["/a", "/b.md", "/a b.md"]),
+        );
+        assert_eq!(both, [PathBuf::from("/a"), PathBuf::from("/b.md")]);
+        // Ничего не нашлось — пути как есть: ошибку покажет открытие файла.
+        let missing = resolve_paths(&args(&["нет", "такого.md"]), Path::new("/"), only(&[]));
+        assert_eq!(
+            missing,
+            [PathBuf::from("/нет"), PathBuf::from("/такого.md")]
         );
     }
 

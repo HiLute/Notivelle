@@ -1,10 +1,11 @@
-//! md-editor — Markdown-редактор для отдельных файлов.
+//! Notivelle — Markdown-редактор для отдельных файлов.
 //!
 //! Библиотечная часть приложения: здесь собирается [`tauri::Builder`],
 //! подключаются плагины и регистрируются команды для фронтенда.
 //! `main.rs` только вызывает [`run`].
 //!
 //! Модули:
+//! - `cli` — параметры командной строки, справка, уход в фон из терминала;
 //! - `document` — байты файла ⇄ текст редактора (переводы строк, BOM);
 //! - `disk` — чтение и атомарная запись файлов;
 //! - `documents` — реестр открытых документов;
@@ -15,6 +16,7 @@
 //! - `spellcheck` — проверка орфографии (ru, en) и личный словарь;
 //! - `watcher` — слежение за открытыми файлами на диске;
 //! - `config` — настройки в `settings.toml`;
+//! - `migration` — перенос настроек со старого имени программы (md-editor);
 //! - `fonts` — шрифты, установленные в системе;
 //! - `dialogs` — системные диалоги;
 //! - `commands` — команды для фронтенда;
@@ -22,6 +24,7 @@
 
 mod assets;
 mod callouts;
+pub mod cli;
 mod commands;
 mod config;
 mod dialogs;
@@ -30,6 +33,7 @@ mod document;
 mod documents;
 mod error;
 mod fonts;
+mod migration;
 mod pending;
 mod render;
 mod spellcheck;
@@ -96,12 +100,13 @@ pub fn run() -> tauri::Result<()> {
                         .build(),
                 )?;
             }
-            log::info!("md-editor {} запущен", env!("CARGO_PKG_VERSION"));
+            log::info!("Notivelle {} запущен", env!("CARGO_PKG_VERSION"));
 
             // Словари орфографии разбираются в фоне, пока открывается окно.
             // Личный словарь — в каталоге конфигурации
-            // (на Linux `~/.config/dev.maksim.md-editor/`).
+            // (на Linux `~/.config/dev.maksim.notivelle/`).
             spellcheck::preload();
+            migrate_legacy_config(app.handle());
             let config_dir = app.path().app_config_dir().ok();
             let config_file = |name: &str| config_dir.as_ref().map(|dir| dir.join(name));
             app.manage(PersonalDictionary::load(config_file("dictionary.txt")));
@@ -124,6 +129,7 @@ pub fn run() -> tauri::Result<()> {
             commands::take_pending_documents,
             commands::open_document_dialog,
             commands::save_document,
+            commands::save_new_document,
             commands::ask_unsaved_changes,
             commands::close_document,
             commands::render_markdown,
@@ -138,4 +144,24 @@ pub fn run() -> tauri::Result<()> {
             commands::list_fonts,
         ])
         .run(tauri::generate_context!())
+}
+
+/// Переносит настройки и личный словарь из каталога, который был у программы
+/// до переименования в Notivelle (`migration.rs`). Должна выполниться до
+/// чтения настроек.
+fn migrate_legacy_config(app: &tauri::AppHandle) {
+    let paths = app.path();
+    let (Ok(base), Ok(current)) = (paths.config_dir(), paths.app_config_dir()) else {
+        return;
+    };
+    let legacy = base.join(migration::LEGACY_IDENTIFIER);
+    match migration::move_config_dir(&legacy, &current) {
+        Ok(migration::Migration::NothingToMove | migration::Migration::AlreadyDone) => {}
+        Ok(outcome) => log::info!(
+            "настройки перенесены из {} в {} ({outcome:?})",
+            legacy.display(),
+            current.display()
+        ),
+        Err(err) => log::warn!("настройки из {} не перенесены: {err}", legacy.display()),
+    }
 }

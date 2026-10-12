@@ -131,8 +131,14 @@ export const api = {
   /** null — файл изменили снаружи, и пользователь отказался его перезаписывать. */
   saveDocument: (id: DocumentId, text: string) =>
     invoke<FormatInfo | null>("save_document", { id, text }),
-  /** Один общий вопрос о несохранённых изменениях в перечисленных документах. */
-  askUnsavedChanges: (ids: DocumentId[]) => invoke<UnsavedChoice>("ask_unsaved_changes", { ids }),
+  /**
+   * Новый документ («Без названия»): Rust спрашивает в диалоге, куда его
+   * сохранить, и записывает файл. null — пользователь закрыл диалог.
+   */
+  saveNewDocument: (text: string) => invoke<OpenOutcome | null>("save_new_document", { text }),
+  /** Один общий вопрос о несохранённых изменениях; имена — для текста вопроса. */
+  askUnsavedChanges: (fileNames: string[]) =>
+    invoke<UnsavedChoice>("ask_unsaved_changes", { fileNames }),
   closeDocument: (id: DocumentId) => invoke<void>("close_document", { id }),
   /** HTML для режима чтения, уже очищенный Rust. id — чтобы найти картинки рядом с файлом. */
   renderMarkdown: (id: DocumentId | null, text: string) =>

@@ -1,5 +1,5 @@
 [package]
-name = "md-editor"
+name = "notivelle"
 version = "0.1.0"
 description = "Obsidian-like Markdown editor for standalone files"
 edition = "2024"
@@ -11,7 +11,7 @@ publish = false
 # чтобы на Windows не столкнулись одноимённые артефакты сборки.
 # crate-type только rlib: staticlib/cdylib нужны лишь для мобильных платформ
 # и заметно замедляют каждую сборку.
-name = "md_editor_lib"
+name = "notivelle_lib"
 crate-type = ["rlib"]
 
 [build-dependencies]
@@ -45,6 +45,14 @@ serde_json = "1.0"
 # 150 тысяч основ) несколько секунд; оптимизируем только этот крейт.
 [profile.dev.package.spellbook]
 opt-level = 3
+
+# Релизная сборка (пакеты): бинарник меньше и чуть быстрее ценой более
+# долгой компиляции — LTO и одна единица кодогенерации дают компилятору
+# оптимизировать программу целиком, strip убирает отладочные символы.
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
 
 [lints.rust]
 # Небезопасный код запрещён везде, кроме мест, явно помеченных

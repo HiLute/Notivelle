@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name={{name}}
+GenericName=Markdown Editor
+GenericName[ru]=Редактор Markdown
+Comment=Edit standalone Markdown files with live preview, callouts, math and diagrams
+Comment[ru]=Редактор отдельных Markdown-файлов: Live Preview, callouts, формулы и диаграммы
+Exec={{exec}} %F
+Icon={{icon}}
+Terminal=false
+StartupNotify=true
+StartupWMClass={{exec}}
+Categories=Utility;TextEditor;
+MimeType=text/markdown;text/x-markdown;
+Keywords=markdown;md;notes;editor;obsidian;
+Keywords[ru]=markdown;заметки;редактор;

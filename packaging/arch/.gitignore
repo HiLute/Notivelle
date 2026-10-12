@@ -1,0 +1,5 @@
+# Результаты makepkg
+src/
+pkg/
+notivelle/
+*.pkg.tar.*

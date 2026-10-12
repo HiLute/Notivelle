@@ -195,6 +195,33 @@ body {
   color: var(--accent);
 }
 
+/* «+» после вкладок — новый документ. */
+.tab-new {
+  display: grid;
+  flex: none;
+  place-items: center;
+  align-self: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.tab-new:hover {
+  background: var(--background-hover);
+  color: var(--text-normal);
+}
+
+.tab-new svg {
+  width: 15px;
+  height: 15px;
+}
+
 /* ---------- Плашка над редактором (notice.ts) ---------- */
 
 .notice {

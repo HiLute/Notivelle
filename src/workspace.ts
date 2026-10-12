@@ -2,6 +2,7 @@ import type { ChangeSpec, EditorState, Text } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { setDocumentId } from "./editor/context";
 import { refreshRenderedBlocks } from "./editor/live-preview/blocks";
 import { scrollToLine, topVisibleLine } from "./editor/scroll";
 import { applyEditorSettings, setLivePreview } from "./editor/setup";
@@ -24,7 +25,13 @@ import type { ReadingView } from "./reading/view";
 import type { StatusBar } from "./statusbar";
 import type { TabBar } from "./tabbar";
 
-const APP_TITLE = "md-editor";
+const APP_TITLE = "Notivelle";
+
+/** Имя нового документа, пока его не сохранили (то же в dialogs.rs). */
+const NEW_DOCUMENT_NAME = "Без названия";
+
+/** Формат нового документа: так его и запишет Rust (documents.rs). */
+const NEW_DOCUMENT_FORMAT: FormatInfo = { lineEnding: "LF", hasBom: false, mixedLineEndings: false };
 
 type ScrollSnapshot = ReturnType<EditorView["scrollSnapshot"]>;
 
@@ -35,8 +42,7 @@ interface Rendered {
   html: string;
 }
 
-/** Что показано на странице: редактор или режим чтения. Есть у каждой
- *  вкладки и у приветственной страницы. */
+/** Что показано во вкладке: редактор или режим чтения. */
 interface Page {
   mode: ViewMode;
   /** Последний режим редактирования: в него Ctrl+E возвращается из чтения. */
@@ -46,11 +52,15 @@ interface Page {
   readingLine: number | null;
 }
 
-/** Вкладка с открытым файлом. */
+/** Вкладка: открытый файл или новый документ, ещё не сохранённый в файл. */
 interface Tab extends Page {
-  readonly id: DocumentId;
-  readonly path: string;
-  readonly fileName: string;
+  /** Ключ вкладки в полосе вкладок; есть и у нового документа. */
+  readonly key: number;
+  /** Документ в Rust; null — новый документ, файла у него пока нет. */
+  id: DocumentId | null;
+  /** Путь для показа; null у нового документа. */
+  path: string | null;
+  fileName: string;
   format: FormatInfo;
   /**
    * Состояние редактора: текст, курсор, история отмены. У активной вкладки
@@ -83,8 +93,11 @@ export interface WorkspaceParts {
  * Открытые файлы во вкладках. Редактор (EditorView) один: при переключении
  * вкладок в него подставляется EditorState нужного файла, поэтому у каждого
  * файла своя история отмены, позиция курсора и прокрутка. У каждой вкладки
- * свой режим: редактор или чтение (Ctrl+E). Когда вкладок нет, показывается
- * приветственная страница.
+ * свой режим: редактор или чтение (Ctrl+E).
+ *
+ * Вкладка есть всегда, как в Kate: без файлов это новый пустой документ
+ * «Без названия». Первое сохранение спрашивает имя файла. Нетронутый пустой
+ * документ уступает место файлу, который открыли.
  */
 export class Workspace {
   readonly #view: EditorView;
@@ -95,11 +108,9 @@ export class Workspace {
   readonly #tabBar: TabBar;
   readonly #notice: NoticeBar;
   #tabs: Tab[] = [];
-  #active: Tab | null = null;
-  /** Приветственная страница; её состояние хранится, пока открыта вкладка. */
-  #welcome: EditorState;
-  readonly #welcomePage: Page = { ...initialModes(), rendered: null, readingLine: null };
-  #welcomeLabel = "Приветственная страница";
+  /** Активная вкладка; назначается в конструкторе. */
+  #active!: Tab;
+  #nextKey = 1;
   /** Идёт операция с диалогом: вторую параллельно не запускаем. */
   #busy = false;
   #shownTitle = "";
@@ -117,14 +128,21 @@ export class Workspace {
     this.#statusBar = parts.statusBar;
     this.#tabBar = parts.tabBar;
     this.#notice = parts.notice;
-    this.#welcome = parts.view.state;
-    parts.tabBar.onActivate = (id) => this.activate(id);
-    parts.tabBar.onClose = (id) => void this.close(id);
+    parts.tabBar.onActivate = (key) => {
+      const tab = this.#tabs.find((candidate) => candidate.key === key);
+      if (tab) this.#activate(tab);
+    };
+    parts.tabBar.onClose = (key) => {
+      const tab = this.#tabs.find((candidate) => candidate.key === key);
+      if (tab) void this.#close(tab);
+    };
+    parts.tabBar.onNew = () => this.newDocument();
     parts.notice.onDismiss = () => {
-      if (this.#active) this.#active.noticeDismissed = true;
+      this.#active.noticeDismissed = true;
       this.#refreshNotice();
     };
-    this.#refresh();
+    // Пока файлы не открыты (или их нет вовсе) — пустой новый документ.
+    this.#show(this.#addNewTab());
   }
 
   /**
@@ -143,8 +161,8 @@ export class Workspace {
    * блоках Live Preview.
    */
   refreshRendered(): void {
-    for (const page of [this.#welcomePage, ...this.#tabs]) page.rendered = null;
-    if (this.#page().mode === "reading") void this.#applyMode();
+    for (const tab of this.#tabs) tab.rendered = null;
+    if (this.#active.mode === "reading") void this.#applyMode();
     else this.#view.dispatch({ effects: refreshRenderedBlocks.of(null) });
   }
 
@@ -165,20 +183,9 @@ export class Workspace {
     this.#refreshNotice();
   }
 
-  get hasTabs(): boolean {
-    return this.#tabs.length > 0;
-  }
-
-  /** Подпись в строке состояния, пока не открыт ни один файл. */
-  set welcomeLabel(label: string) {
-    this.#welcomeLabel = label;
-    if (!this.#active) this.#refresh();
-  }
-
   /** Вызывается редактором при каждом изменении текста активной вкладки. */
   handleDocChanged(): void {
     const tab = this.#active;
-    if (!tab) return;
     const dirty = this.#isDirty(tab);
     if (dirty !== this.#activeDirty) {
       this.#activeDirty = dirty;
@@ -188,7 +195,8 @@ export class Workspace {
 
   /**
    * Показывает результаты открытия файлов: новые вкладки, переход на уже
-   * открытые, ошибки. Активной становится вкладка первого файла из пачки.
+   * открытые, ошибки. Активной становится вкладка первого файла из пачки, а
+   * нетронутый пустой новый документ закрывается — его место занял файл.
    */
   accept(outcomes: readonly OpenOutcome[]): void {
     let target: DocumentId | null = null;
@@ -211,7 +219,11 @@ export class Workspace {
       }
     }
 
-    if (target !== null) this.activate(target);
+    const opened = this.#tabs.find((tab) => tab.id !== null && tab.id === target);
+    if (opened) {
+      this.#activate(opened);
+      for (const tab of this.#tabs.filter((candidate) => this.#isPristine(candidate))) this.#removeTab(tab);
+    }
     if (failures.length > 0) {
       this.#statusBar.showMessage(failures.join(" · "), "error");
     } else if (mixed.length > 0) {
@@ -221,9 +233,28 @@ export class Workspace {
     }
   }
 
-  activate(id: DocumentId): void {
-    const tab = this.#tabs.find((candidate) => candidate.id === id);
-    if (!tab) return;
+  /**
+   * Настройки загрузились. Пустой новый документ появился раньше них —
+   * берёт режим правки из настроек (исходник или Live Preview).
+   */
+  settingsLoaded(): void {
+    for (const tab of this.#tabs.filter((candidate) => this.#isPristine(candidate))) {
+      Object.assign(tab, newDocumentModes());
+    }
+    if (this.#isPristine(this.#active)) {
+      void this.#applyMode();
+      this.#refresh();
+    }
+  }
+
+  /** Ctrl+N и «+» в полосе вкладок: новый пустой документ. */
+  newDocument(): void {
+    const tab = this.#addNewTab();
+    this.#stashActive();
+    this.#show(tab);
+  }
+
+  #activate(tab: Tab): void {
     if (tab === this.#active) {
       this.#focusContent();
       return;
@@ -240,10 +271,10 @@ export class Workspace {
   /** Ctrl+Tab / Ctrl+Shift+Tab: соседняя вкладка по кругу. */
   activateNext(step: 1 | -1): void {
     const count = this.#tabs.length;
-    if (!this.#active || count < 2) return;
+    if (count < 2) return;
     const index = this.#tabs.indexOf(this.#active);
     const next = this.#tabs[(index + step + count) % count];
-    if (next) this.activate(next.id);
+    if (next) this.#activate(next);
   }
 
   /**
@@ -251,7 +282,7 @@ export class Workspace {
    * вверху экрана, останется вверху и в другом режиме.
    */
   setMode(mode: ViewMode): void {
-    const page = this.#page();
+    const page = this.#active;
     if (mode === page.mode) {
       this.#focusContent();
       return;
@@ -273,13 +304,13 @@ export class Workspace {
 
   /** Ctrl+E: чтение ⇄ последний режим редактирования, как в Obsidian. */
   toggleReading(): void {
-    const page = this.#page();
+    const page = this.#active;
     this.setMode(page.mode === "reading" ? page.editingMode : "reading");
   }
 
   /** Ctrl+Shift+E: исходник ⇄ Live Preview. Из чтения — в другой режим правки. */
   toggleEditingMode(): void {
-    const page = this.#page();
+    const page = this.#active;
     const current = page.mode === "reading" ? page.editingMode : page.mode;
     this.setMode(current === "live" ? "source" : "live");
   }
@@ -314,8 +345,8 @@ export class Workspace {
 
   /** Ссылка из режима чтения на файл рядом с документом. */
   async openLink(href: string): Promise<void> {
-    if (!this.#active) {
-      this.#statusBar.showMessage("Ссылки на файлы работают в открытом файле");
+    if (this.#active.id === null) {
+      this.#statusBar.showMessage("Ссылки на файлы работают, когда документ сохранён в файл");
       return;
     }
     try {
@@ -334,39 +365,35 @@ export class Workspace {
     }
   }
 
-  /** Ctrl+S. */
+  /** Ctrl+S. Новый документ сохраняется всегда: спрашиваем имя файла. */
   save(): Promise<void> {
     return this.#exclusive(undefined, async () => {
       const tab = this.#active;
-      if (!tab) {
-        this.#statusBar.showMessage("Это приветственная страница. Откройте файл: Ctrl+O");
-        return;
-      }
-      if (!this.#isDirty(tab)) {
+      if (tab.id !== null && !this.#isDirty(tab)) {
         this.#statusBar.showMessage("Изменений нет");
         return;
       }
-      if (await this.#saveTab(tab)) this.#statusBar.showMessage(`Сохранено: ${tab.fileName}`);
-    });
-  }
-
-  /** Закрывает вкладку, при необходимости спросив о несохранённых изменениях. */
-  close(id: DocumentId): Promise<void> {
-    return this.#exclusive(undefined, async () => {
-      const tab = this.#tabs.find((candidate) => candidate.id === id);
-      if (!tab) return;
-      if (this.#isDirty(tab)) {
-        const choice = await api.askUnsavedChanges([tab.id]);
-        if (choice === "cancel") return;
-        if (choice === "save" && !(await this.#saveTab(tab))) return;
-      }
-      this.#removeTab(tab);
+      const saved = await this.#saveTab(tab);
+      if (saved) this.#statusBar.showMessage(`Сохранено: ${saved.fileName}`);
     });
   }
 
   /** Ctrl+W. */
   closeActive(): Promise<void> {
-    return this.#active ? this.close(this.#active.id) : Promise.resolve();
+    return this.#close(this.#active);
+  }
+
+  /** Закрывает вкладку, при необходимости спросив о несохранённых изменениях. */
+  #close(tab: Tab): Promise<void> {
+    return this.#exclusive(undefined, async () => {
+      if (!this.#tabs.includes(tab)) return;
+      if (this.#isDirty(tab)) {
+        const choice = await api.askUnsavedChanges([tab.fileName]);
+        if (choice === "cancel") return;
+        if (choice === "save" && !(await this.#saveTab(tab))) return;
+      }
+      this.#removeTab(tab);
+    });
   }
 
   /**
@@ -379,14 +406,15 @@ export class Workspace {
       const dirty = this.#tabs.filter((tab) => this.#isDirty(tab));
       if (dirty.length === 0) return true;
 
-      const choice = await api.askUnsavedChanges(dirty.map((tab) => tab.id));
+      const choice = await api.askUnsavedChanges(dirty.map((tab) => tab.fileName));
       if (choice === "cancel") return false;
       if (choice === "discard") return true;
       for (const tab of dirty) {
-        // Сохранение не удалось или пользователь отказался перезаписывать
-        // изменённый снаружи файл: показываем этот файл и окно не закрываем.
+        // Сохранение не удалось, пользователь отказался перезаписывать
+        // изменённый снаружи файл или закрыл диалог имени нового файла:
+        // показываем этот документ и окно не закрываем.
         if (!(await this.#saveTab(tab))) {
-          this.activate(tab.id);
+          if (this.#tabs.includes(tab)) this.#activate(tab);
           return false;
         }
       }
@@ -397,14 +425,11 @@ export class Workspace {
   #createTab(document: OpenedDocument): Tab {
     const state = this.#createState(document.text, document.id);
     return {
+      key: this.#nextKey++,
       id: document.id,
       path: document.path,
       fileName: document.fileName,
-      format: {
-        lineEnding: document.lineEnding,
-        hasBom: document.hasBom,
-        mixedLineEndings: document.mixedLineEndings,
-      },
+      format: formatOf(document),
       state,
       scroll: null,
       savedDoc: state.doc,
@@ -416,12 +441,49 @@ export class Workspace {
     };
   }
 
+  /** Добавляет вкладку нового пустого документа (не переключаясь на неё). */
+  #addNewTab(): Tab {
+    const state = this.#createState("", null);
+    const tab: Tab = {
+      key: this.#nextKey++,
+      id: null,
+      path: null,
+      fileName: this.#newDocumentName(),
+      format: NEW_DOCUMENT_FORMAT,
+      state,
+      scroll: null,
+      savedDoc: state.doc,
+      diskState: "unchanged",
+      noticeDismissed: false,
+      ...newDocumentModes(),
+      rendered: null,
+      readingLine: null,
+    };
+    this.#tabs.push(tab);
+    return tab;
+  }
+
+  /** «Без названия», «Без названия 2»… — первое имя, которое не занято. */
+  #newDocumentName(): string {
+    const taken = new Set(this.#tabs.filter((tab) => tab.id === null).map((tab) => tab.fileName));
+    for (let number = 1; ; number++) {
+      const name = number === 1 ? NEW_DOCUMENT_NAME : `${NEW_DOCUMENT_NAME} ${number}`;
+      if (!taken.has(name)) return name;
+    }
+  }
+
+  /** Новый документ, в котором ничего не набрали: его можно закрыть молча. */
+  #isPristine(tab: Tab): boolean {
+    return tab.id === null && this.#docOf(tab).length === 0;
+  }
+
   /**
    * Берёт текст файла с диска. Текст заменяется одной правкой, а не новым
    * состоянием редактора: курсор остаётся на месте, а Ctrl+Z вернёт текст,
    * который был до перечитывания.
    */
   async #reloadFromDisk(tab: Tab, message: string): Promise<void> {
+    if (tab.id === null) return;
     let document: OpenedDocument;
     try {
       document = await api.reloadDocument(tab.id);
@@ -438,11 +500,7 @@ export class Workspace {
       tab.state = tab.state.update({ changes: change, userEvent: "input.reload" }).state;
     }
     tab.savedDoc = this.#docOf(tab);
-    tab.format = {
-      lineEnding: document.lineEnding,
-      hasBom: document.hasBom,
-      mixedLineEndings: document.mixedLineEndings,
-    };
+    tab.format = formatOf(document);
     tab.diskState = "unchanged";
     tab.rendered = null;
     if (tab === this.#active) {
@@ -456,7 +514,7 @@ export class Workspace {
   /** Плашка про файл на диске у активной вкладки. */
   #refreshNotice(): void {
     const tab = this.#active;
-    if (!tab || tab.noticeDismissed || tab.diskState === "unchanged") {
+    if (tab.noticeDismissed || tab.diskState === "unchanged") {
       this.#notice.hide();
       return;
     }
@@ -477,47 +535,38 @@ export class Workspace {
     } else {
       this.#notice.show(`Файл «${tab.fileName}» удалили или переместили.`, [
         { label: "Сохранить заново", run: () => void this.save() },
-        { label: "Закрыть вкладку", run: () => void this.close(tab.id) },
+        { label: "Закрыть вкладку", run: () => void this.#close(tab) },
       ]);
     }
   }
 
-  /** Текущая страница: активная вкладка или приветственная. */
-  #page(): Page {
-    return this.#active ?? this.#welcomePage;
-  }
-
-  /** Запоминает состояние текущей страницы перед уходом с неё. */
+  /** Запоминает состояние активной вкладки перед уходом с неё. */
   #stashActive(): void {
-    const page = this.#page();
-    if (page.mode === "reading") page.readingLine = this.#reading.topSourceLine();
-    if (this.#active) {
-      this.#active.state = this.#view.state;
-      this.#active.scroll = this.#view.scrollSnapshot();
-    } else {
-      this.#welcome = this.#view.state;
-    }
+    const tab = this.#active;
+    if (tab.mode === "reading") tab.readingLine = this.#reading.topSourceLine();
+    tab.state = this.#view.state;
+    tab.scroll = this.#view.scrollSnapshot();
   }
 
-  /** Подставляет в редактор вкладку или, если null, приветственную страницу. */
-  #show(tab: Tab | null): void {
+  /** Подставляет вкладку в редактор. */
+  #show(tab: Tab): void {
     this.#active = tab;
-    this.#view.setState(tab ? tab.state : this.#welcome);
+    this.#view.setState(tab.state);
     // Настройки могли поменяться, пока вкладка была в фоне.
     applyEditorSettings(this.#view);
-    if (tab?.scroll) this.#view.dispatch({ effects: tab.scroll });
-    this.#activeDirty = tab !== null && this.#isDirty(tab);
+    if (tab.scroll) this.#view.dispatch({ effects: tab.scroll });
+    this.#activeDirty = this.#isDirty(tab);
     this.#statusBar.setCursor(this.#view.state);
     this.#refresh();
     void this.#applyMode();
   }
 
   /**
-   * Показывает редактор или режим чтения — как задано у текущей страницы.
+   * Показывает редактор или режим чтения — как задано у активной вкладки.
    * HTML для чтения рендерит Rust; пока текст не менялся, берётся готовый.
    */
   async #applyMode(): Promise<void> {
-    const page = this.#page();
+    const page = this.#active;
     if (page.mode !== "reading") {
       this.#showEditor();
       return;
@@ -527,7 +576,7 @@ export class Workspace {
     let html = page.rendered?.doc === doc ? page.rendered.html : null;
     if (html === null) {
       try {
-        html = await api.renderMarkdown(this.#active?.id ?? null, doc.toString());
+        html = await api.renderMarkdown(page.id, doc.toString());
       } catch (error) {
         this.#statusBar.showMessage(errorMessage(error), "error");
         page.mode = page.editingMode;
@@ -536,7 +585,7 @@ export class Workspace {
         return;
       }
       // Пока Rust рендерил, пользователь мог переключить вкладку или режим.
-      if (this.#page() !== page || page.mode !== "reading") return;
+      if (this.#active !== page || page.mode !== "reading") return;
       page.rendered = { doc, html };
     }
 
@@ -549,14 +598,14 @@ export class Workspace {
     if (line !== null) this.#reading.scrollToSourceLine(line);
     this.#reading.focus();
     await drawn;
-    if (line !== null && this.#page() === page && page.mode === "reading") {
+    if (line !== null && this.#active === page && page.mode === "reading") {
       this.#reading.scrollToSourceLine(line);
     }
   }
 
-  /** Показывает редактор в режиме текущей страницы: исходник или Live Preview. */
+  /** Показывает редактор в режиме активной вкладки: исходник или Live Preview. */
   #showEditor(): void {
-    setLivePreview(this.#view, this.#page().mode === "live");
+    setLivePreview(this.#view, this.#active.mode === "live");
     this.#reading.hide();
     this.#editorHost.hidden = false;
     this.#view.requestMeasure();
@@ -564,35 +613,83 @@ export class Workspace {
   }
 
   #focusContent(): void {
-    if (this.#page().mode === "reading") this.#reading.focus();
+    if (this.#active.mode === "reading") this.#reading.focus();
     else this.#view.focus();
   }
 
   #removeTab(tab: Tab): void {
     const index = this.#tabs.indexOf(tab);
+    if (index < 0) return;
     this.#tabs.splice(index, 1);
-    void api.closeDocument(tab.id);
-    if (tab === this.#active) {
-      // Как в браузере: активной становится соседняя вкладка справа, а если
-      // её нет — слева. Состояние закрытой вкладки сохранять уже незачем.
-      this.#show(this.#tabs[index] ?? this.#tabs[index - 1] ?? null);
-    } else {
+    if (tab.id !== null) void api.closeDocument(tab.id);
+    if (tab !== this.#active) {
       this.#refresh();
+      return;
     }
+    // Как в браузере: активной становится соседняя вкладка справа, а если
+    // её нет — слева. Закрыли последнюю — остаётся пустой новый документ.
+    // Состояние закрытой вкладки сохранять уже незачем.
+    this.#show(this.#tabs[index] ?? this.#tabs[index - 1] ?? this.#addNewTab());
   }
 
-  async #saveTab(tab: Tab): Promise<boolean> {
+  /**
+   * Сохраняет вкладку. Возвращает вкладку, в которой теперь сохранённый
+   * файл (обычно ту же), или null, если сохранение не состоялось.
+   */
+  async #saveTab(tab: Tab): Promise<Tab | null> {
+    if (tab.id === null) return this.#saveNew(tab);
     // Снимок текста на момент сохранения: пока Rust пишет файл, пользователь
     // может продолжать печатать, и эти правки останутся несохранёнными.
     const doc = this.#docOf(tab);
     const format = await api.saveDocument(tab.id, doc.toString());
-    if (!format) return false;
+    if (!format) return null;
     tab.savedDoc = doc;
     tab.format = format;
     tab.diskState = "unchanged";
     if (tab === this.#active) this.#activeDirty = this.#isDirty(tab);
     this.#refresh();
-    return true;
+    return tab;
+  }
+
+  /**
+   * Первое сохранение нового документа: Rust спрашивает имя файла и
+   * записывает его. Вкладка становится вкладкой этого файла, а курсор и
+   * история отмены остаются.
+   */
+  async #saveNew(tab: Tab): Promise<Tab | null> {
+    // Диалог спросит имя файла — пусть будет видно, о каком документе речь.
+    if (tab !== this.#active) this.#activate(tab);
+    const doc = this.#docOf(tab);
+    const outcome = await api.saveNewDocument(doc.toString());
+    if (!outcome || outcome.status === "failed") return null;
+
+    if (outcome.status === "alreadyOpen") {
+      // Заменили файл, который уже открыт в другой вкладке. Та перечитает
+      // его сама (watcher.rs), а эта больше не нужна.
+      const existing = this.#tabs.find((other) => other.id === outcome.id) ?? null;
+      this.#removeTab(tab);
+      if (existing) this.#activate(existing);
+      return existing;
+    }
+
+    const { document } = outcome;
+    tab.id = document.id;
+    tab.path = document.path;
+    tab.fileName = document.fileName;
+    tab.format = formatOf(document);
+    tab.savedDoc = doc;
+    tab.diskState = "unchanged";
+    tab.rendered = null;
+    // Live Preview ищет картинки рядом с файлом — теперь он есть.
+    const effects = [setDocumentId(document.id), refreshRenderedBlocks.of(null)];
+    if (tab === this.#active) {
+      this.#view.dispatch({ effects });
+      this.#activeDirty = this.#isDirty(tab);
+    } else {
+      tab.state = tab.state.update({ effects }).state;
+    }
+    this.#refresh();
+    return tab;
   }
 
   #docOf(tab: Tab): Text {
@@ -626,22 +723,22 @@ export class Workspace {
     const labels = tabLabels(this.#tabs);
     this.#tabBar.render(
       this.#tabs.map((tab, index) => ({
-        id: tab.id,
+        key: tab.key,
         label: labels[index] ?? tab.fileName,
-        path: tab.path,
+        title: tab.path ?? "Новый документ: Ctrl+S сохранит его в файл",
         dirty: this.#isDirty(tab),
         active: tab === this.#active,
       })),
     );
 
     const tab = this.#active;
-    this.#statusBar.setFile(tab ? tab.path : this.#welcomeLabel, tab?.path);
-    this.#statusBar.setFormat(tab?.format ?? null);
-    this.#statusBar.setMode(this.#page().mode);
+    this.#statusBar.setFile(tab.path ?? `${tab.fileName} — ещё не сохранён (Ctrl+S)`, tab.path ?? "");
+    this.#statusBar.setFormat(tab.format);
+    this.#statusBar.setMode(tab.mode);
 
     this.#refreshNotice();
 
-    const title = tab ? `${this.#activeDirty ? "● " : ""}${tab.fileName} — ${APP_TITLE}` : APP_TITLE;
+    const title = `${this.#activeDirty ? "● " : ""}${tab.fileName} — ${APP_TITLE}`;
     // Заголовок меняется через IPC, поэтому дёргаем его только при изменении.
     if (title !== this.#shownTitle) {
       this.#shownTitle = title;
@@ -650,10 +747,24 @@ export class Workspace {
   }
 }
 
-/** Режим новой вкладки — из настроек. Из чтения Ctrl+E ведёт в Live Preview. */
+/** Режим вкладки с файлом — из настроек. Из чтения Ctrl+E ведёт в Live Preview. */
 function initialModes(): Pick<Page, "mode" | "editingMode"> {
   const mode = currentSettings().default_mode;
   return { mode, editingMode: mode === "reading" ? "live" : mode };
+}
+
+/** Новый документ — чтобы писать, поэтому сразу режим правки, а не чтение. */
+function newDocumentModes(): Pick<Page, "mode" | "editingMode"> {
+  const { editingMode } = initialModes();
+  return { mode: editingMode, editingMode };
+}
+
+function formatOf(document: OpenedDocument): FormatInfo {
+  return {
+    lineEnding: document.lineEnding,
+    hasBom: document.hasBom,
+    mixedLineEndings: document.mixedLineEndings,
+  };
 }
 
 /**
@@ -664,7 +775,9 @@ function tabLabels(tabs: readonly Tab[]): string[] {
   const counts = new Map<string, number>();
   for (const tab of tabs) counts.set(tab.fileName, (counts.get(tab.fileName) ?? 0) + 1);
   return tabs.map((tab) =>
-    (counts.get(tab.fileName) ?? 0) > 1 ? `${tab.fileName} · ${parentDirName(tab.path)}` : tab.fileName,
+    tab.path !== null && (counts.get(tab.fileName) ?? 0) > 1
+      ? `${tab.fileName} · ${parentDirName(tab.path)}`
+      : tab.fileName,
   );
 }
 

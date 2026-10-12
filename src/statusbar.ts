@@ -64,7 +64,7 @@ export class StatusBar {
     this.#file.title = fullPath;
   }
 
-  /** null — открыт не файл, а приветственная страница. */
+  /** null — формат неизвестен (строка формата пустая). */
   setFormat(format: FormatInfo | null): void {
     if (!format) {
       this.#format.textContent = "";

@@ -18,7 +18,7 @@ use crate::assets;
 use crate::config::{Config, LoadedSettings, Settings};
 use crate::dialogs::{self, UnsavedChoice};
 use crate::document;
-use crate::documents::{DocumentId, Documents, FormatInfo, OpenOutcome, OpenedDocument};
+use crate::documents::{DocumentId, Documents, FormatInfo, OpenOutcome, Opened, OpenedDocument};
 use crate::error::AppError;
 use crate::fonts::{self, FontFamily};
 use crate::pending::PendingFiles;
@@ -128,27 +128,48 @@ pub async fn save_document(
     .await
 }
 
-/// Спрашивает, что делать с несохранёнными изменениями документов
-/// (одной вкладки или всех при закрытии окна).
+/// Сохраняет новый документ («Без названия»): спрашивает в диалоге, куда,
+/// записывает файл и дальше работает с ним как с обычным открытым файлом.
+/// `None` — пользователь закрыл диалог.
+///
+/// Путь выбирает пользователь в системном диалоге, а не фронтенд: правило
+/// из `documents.rs` («фронтенд не передаёт пути») соблюдается.
+#[tauri::command]
+pub async fn save_new_document(
+    window: WebviewWindow,
+    text: String,
+) -> Result<Option<OpenOutcome>, AppError> {
+    run_blocking(window, move |window, documents| {
+        let suggested = dialogs::suggested_file_name(&text);
+        let Some(path) = dialogs::pick_new_file(window, &suggested) else {
+            return Ok(None);
+        };
+        let outcome = match documents.save_new(&path, &text)? {
+            Opened::New(document) => OpenOutcome::Opened { document },
+            Opened::AlreadyOpen(id) => OpenOutcome::AlreadyOpen { id },
+        };
+        watch_open_files(window, documents);
+        Ok(Some(outcome))
+    })
+    .await
+}
+
+/// Спрашивает, что делать с несохранёнными изменениями (одной вкладки или
+/// всех при закрытии окна). Имена приходят из фронтенда: у нового документа
+/// ещё нет файла, а значит, и записи в реестре. Имена только показываются.
 #[tauri::command]
 pub async fn ask_unsaved_changes(
     window: WebviewWindow,
-    ids: Vec<DocumentId>,
+    file_names: Vec<String>,
 ) -> Result<UnsavedChoice, AppError> {
-    run_blocking(window, move |window, documents| {
-        // `collect` в `Result<Vec<_>, _>` останавливается на первой ошибке:
-        // либо все имена, либо ошибка о неизвестном документе.
-        let file_names = ids
-            .iter()
-            .map(|&id| documents.file_name(id))
-            .collect::<Result<Vec<_>, _>>()?;
+    run_blocking(window, move |window, _| {
         Ok(dialogs::ask_unsaved_changes(window, &file_names))
     })
     .await
 }
 
 /// HTML для режима чтения. `id` нужен, чтобы картинки с относительными путями
-/// искались рядом с документом; у приветственной страницы его нет.
+/// искались рядом с документом; у нового, ещё не сохранённого документа его нет.
 #[tauri::command]
 pub async fn render_markdown(
     window: WebviewWindow,

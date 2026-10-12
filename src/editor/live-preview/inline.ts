@@ -72,7 +72,9 @@ export const inlinePreview = ViewPlugin.fromClass(
         update.selectionSet ||
         update.viewportChanged ||
         // Парсер дочитал документ в фоне — дерево стало полнее.
-        syntaxTree(update.startState) !== syntaxTree(update.state)
+        syntaxTree(update.startState) !== syntaxTree(update.state) ||
+        // Новый документ сохранили в файл: картинки теперь ищутся рядом с ним.
+        update.startState.facet(documentIdFacet) !== update.state.facet(documentIdFacet)
       ) {
         this.decorations = buildDecorations(update.view);
       }

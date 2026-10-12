@@ -49,6 +49,8 @@ export class SettingsPanel {
   readonly #sync: ((settings: Readonly<Settings>) => void)[] = [];
   /** Где лежит файл настроек — показываем внизу панели. */
   #pathNote: HTMLElement;
+  /** Версия программы — внизу панели, под путём. */
+  #about: HTMLElement;
   readonly #fontPickers: FontPicker[] = [];
 
   constructor(private readonly onError: (message: string) => void) {
@@ -64,6 +66,7 @@ export class SettingsPanel {
     header.append(title, close);
 
     this.#pathNote = element("p", "settings-path");
+    this.#about = element("p", "settings-about");
     this.#dialog.append(
       header,
       this.#section("Оформление", [this.#choice("Тема", "theme", THEMES), this.#toggle(TOGGLES[0])]),
@@ -74,6 +77,7 @@ export class SettingsPanel {
         this.#toggle(TOGGLES[2]),
       ]),
       this.#pathNote,
+      this.#about,
     );
     // Клик по затемнению вокруг панели (это сам <dialog>) закрывает её.
     this.#dialog.addEventListener("click", (event) => {
@@ -94,6 +98,11 @@ export class SettingsPanel {
     this.#pathNote.textContent = path
       ? `Настройки хранятся в ${path} — файл можно править и руками.`
       : "Каталог настроек недоступен: изменения действуют до закрытия программы.";
+  }
+
+  /** «Notivelle 0.1.0 · Tauri 2.x · linux» — пригодится, чтобы сообщить об ошибке. */
+  set about(text: string) {
+    this.#about.textContent = text;
   }
 
   open(): void {

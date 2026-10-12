@@ -203,6 +203,11 @@
 
 .markdown-rendered .contains-task-list {
   padding-left: 1.4em;
+}
+
+/* Маркер прячем только у задач: в одном списке с ними могут быть и обычные
+   пункты, и у тех маркер остаётся. */
+.markdown-rendered .task-list-item {
   list-style: none;
 }
 
@@ -210,20 +215,31 @@
   margin: 0 0.45em 0 -1.4em;
 }
 
-/* Чекбокс задачи как в Obsidian: скруглённый квадрат с тонкой рамкой, у
-   отмеченного — заливка акцентным цветом и галочка. Стиль общий для режима
-   чтения и Live Preview (там у виджета тот же класс). */
+/* Чекбокс задачи как в Obsidian: квадрат размером с шрифт текста (1em),
+   скруглённый, с тонкой рамкой; у отмеченного — заливка акцентным цветом и
+   галочка. Стиль общий для режима чтения и Live Preview (там у виджета тот
+   же класс).
+
+   font: inherit обязателен: у <input> свой шрифт из стилей WebKit по
+   умолчанию (около 13 px), и все em считались бы от него — чекбокс выходил
+   заметно мельче текста. */
 .task-list-item-checkbox {
   position: relative;
   flex: none;
-  width: 0.95em;
-  height: 0.95em;
+  width: 1em;
+  height: 1em;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--text-faint);
+  /* 1,5px, а не 1px: окно GTK3 рисуется с масштабом 2, и при дробном
+     масштабе экрана (1,2) композитор уменьшает картинку — линия в 1px
+     расплывается в бледную полосу. При масштабе 1 WebKit всё равно
+     округлит рамку до целого пикселя. */
+  border: 1.5px solid var(--text-faint);
   border-radius: 4px;
   background: transparent;
-  vertical-align: -0.12em;
+  font: inherit;
+  /* Центр квадрата — на середине строчных букв. */
+  vertical-align: -0.2em;
   cursor: pointer;
   appearance: none;
 }
@@ -255,10 +271,8 @@
 }
 
 /* Выполненная задача зачёркнута и приглушена; её вложенный список — нет
-   (поэтому текст обёрнут отдельно, см. reading/tasks.ts). В «рыхлом» списке
-   текст пункта лежит в абзацах. */
+   (поэтому текст обёрнут отдельно, см. reading/tasks.ts). */
 .task-list-item-checkbox:checked + .task-list-item-text,
-.task-list-item:has(> .task-list-item-checkbox:checked) > p,
 .cm-lp-task-done {
   color: var(--text-muted);
   text-decoration: line-through;

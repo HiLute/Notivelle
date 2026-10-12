@@ -11,6 +11,7 @@ export function prepareTaskCheckboxes(root: HTMLElement): void {
   for (const box of root.querySelectorAll<HTMLInputElement>("input.task-list-item-checkbox")) {
     box.disabled = false;
     box.title = "Отметить задачу";
+    moveIntoParagraph(box);
 
     const text: ChildNode[] = [];
     for (let node = box.nextSibling; node; node = node.nextSibling) {
@@ -23,6 +24,19 @@ export function prepareTaskCheckboxes(root: HTMLElement): void {
     box.after(wrapper);
     wrapper.append(...text);
   }
+}
+
+/**
+ * В «рыхлом» списке (пункты разделены пустой строкой) текст пункта лежит в
+ * абзаце, а чекбокс comrak ставит перед ним: `<input> <p>текст</p>`. Абзац —
+ * блок, и текст уезжал на строку ниже чекбокса. Переносим чекбокс в начало
+ * абзаца, как это делает GitHub.
+ */
+function moveIntoParagraph(box: HTMLInputElement): void {
+  let next = box.nextSibling;
+  while (next instanceof Text && next.data.trim() === "") next = next.nextSibling;
+  // Пробел между чекбоксом и текстом — как в обычном («плотном») списке.
+  if (next instanceof HTMLParagraphElement) next.prepend(box, " ");
 }
 
 /**

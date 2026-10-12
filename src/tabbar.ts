@@ -1,41 +1,59 @@
-import type { DocumentId } from "./ipc";
+import plusIcon from "lucide-static/icons/plus.svg?raw";
 
 /** Данные для отрисовки одной вкладки. */
 export interface TabView {
-  id: DocumentId;
+  /**
+   * Ключ вкладки. Не DocumentId: у нового, ещё не сохранённого документа
+   * его нет.
+   */
+  key: number;
   label: string;
-  /** Полный путь — во всплывающей подсказке. */
-  path: string;
+  /** Подсказка при наведении: полный путь или пояснение. */
+  title: string;
   dirty: boolean;
   active: boolean;
 }
 
 /**
  * Полоса вкладок, как в Kate: клик — переключиться, крестик или средняя
- * кнопка мыши — закрыть, колесо — прокрутить полосу. Вкладками она не
- * управляет: рисует то, что ей передали, и сообщает о действиях через колбэки.
+ * кнопка мыши — закрыть, колесо — прокрутить полосу, «+» — новый документ.
+ * Вкладками она не управляет: рисует то, что ей передали, и сообщает о
+ * действиях через колбэки.
  */
 export class TabBar {
-  onActivate: (id: DocumentId) => void = () => {};
-  onClose: (id: DocumentId) => void = () => {};
+  onActivate: (key: number) => void = () => {};
+  onClose: (key: number) => void = () => {};
+  onNew: () => void = () => {};
   readonly #root: HTMLElement;
+  readonly #newButton: HTMLButtonElement;
 
   constructor(root: HTMLElement) {
     this.#root = root;
+    this.#newButton = document.createElement("button");
+    this.#newButton.type = "button";
+    this.#newButton.className = "tab-new";
+    this.#newButton.title = "Новый документ (Ctrl+N)";
+    this.#newButton.setAttribute("aria-label", "Новый документ");
+    // SVG из пакета lucide-static: innerHTML безопасен.
+    this.#newButton.innerHTML = plusIcon;
 
     // Один обработчик на всю полосу (делегирование событий): вкладки
     // перерисовываются, а обработчики остаются прежними.
     root.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
-      const id = tabIdAt(target);
-      if (id === null) return;
-      if (target.closest(".tab-close")) this.onClose(id);
-      else this.onActivate(id);
+      if (target.closest(".tab-new")) {
+        this.onNew();
+        return;
+      }
+      const key = tabKeyAt(target);
+      if (key === null) return;
+      if (target.closest(".tab-close")) this.onClose(key);
+      else this.onActivate(key);
     });
     root.addEventListener("auxclick", (event) => {
       if (event.button !== 1) return;
-      const id = tabIdAt(event.target as HTMLElement);
-      if (id !== null) this.onClose(id);
+      const key = tabKeyAt(event.target as HTMLElement);
+      if (key !== null) this.onClose(key);
     });
     // Клик по вкладке не должен забирать фокус у редактора, а средняя
     // кнопка — включать автопрокрутку.
@@ -53,7 +71,7 @@ export class TabBar {
 
   render(tabs: readonly TabView[]): void {
     this.#root.hidden = tabs.length === 0;
-    this.#root.replaceChildren(...tabs.map(renderTab));
+    this.#root.replaceChildren(...tabs.map(renderTab), this.#newButton);
     this.#root
       .querySelector(".tab[aria-selected='true']")
       ?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -65,8 +83,8 @@ function renderTab(tab: TabView): HTMLElement {
   element.className = "tab";
   element.setAttribute("role", "tab");
   element.setAttribute("aria-selected", String(tab.active));
-  element.dataset.id = String(tab.id);
-  element.title = tab.path;
+  element.dataset.key = String(tab.key);
+  element.title = tab.title;
   if (tab.dirty) element.dataset.dirty = "";
 
   const label = document.createElement("span");
@@ -86,7 +104,7 @@ function renderTab(tab: TabView): HTMLElement {
   return element;
 }
 
-function tabIdAt(target: HTMLElement): DocumentId | null {
-  const id = target.closest<HTMLElement>(".tab")?.dataset.id;
-  return id === undefined ? null : (Number(id) as DocumentId);
+function tabKeyAt(target: HTMLElement): number | null {
+  const key = target.closest<HTMLElement>(".tab")?.dataset.key;
+  return key === undefined ? null : Number(key);
 }

@@ -1,0 +1,80 @@
+# Пакет Notivelle для Arch Linux (и Omarchy).
+#
+#   cd packaging/arch
+#   makepkg -si
+#
+# Пакет собирается из закоммиченного состояния репозитория (источник
+# git+file — этот же репозиторий), незакоммиченные правки в него не попадают.
+# Нужны Rust (rustup) и Node.js с npm в PATH: Node в Omarchy ставится через
+# mise, поэтому в makedepends его нет.
+
+pkgname=notivelle
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Obsidian-like Markdown editor for standalone files'
+arch=('x86_64')
+# Лицензия у проекта пока не выбрана.
+license=('LicenseRef-custom')
+# Библиотеки, с которыми слинкован бинарник (readelf -d … | grep NEEDED).
+depends=(
+  'cairo'
+  'dbus'
+  'gdk-pixbuf2'
+  'glib2'
+  'glibc'
+  'gtk3'
+  'libgcc'
+  'libsoup3'
+  'webkit2gtk-4.1'
+  'hicolor-icon-theme'
+  'xdg-utils' # открытие ссылок в браузере
+)
+makedepends=('git' 'rust')
+# lto: makepkg добавил бы свои флаги LTO к сборке Rust, а у нас LTO уже
+# включён в Cargo.toml. debug: отдельный пакет с отладочными символами не нужен.
+options=('!lto' '!debug')
+# Каталог репозитория — на два уровня выше этого файла.
+source=("$pkgname::git+file://${startdir%/packaging/arch}")
+sha256sums=('SKIP')
+
+# Версия из Cargo.toml плюс номер и хеш коммита: 0.1.0.r12.1a2b3c4. После
+# нового коммита пакет получает версию больше, и pacman видит обновление.
+pkgver() {
+  cd "$pkgname"
+  local version
+  version=$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -n 1)
+  printf '%s.r%s.%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd "$pkgname"
+  command -v npm > /dev/null || {
+    echo 'Нужен npm в PATH (Node.js через mise или пакеты nodejs и npm).' >&2
+    return 1
+  }
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+  npm ci --no-audit --no-fund --prefer-offline
+}
+
+build() {
+  cd "$pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  # Tauri собирает фронтенд (npm run build), релизный бинарник и deb-пакет.
+  # Из deb берём готовое дерево /usr: бинарник, .desktop-файл и иконки.
+  npm run tauri build -- --bundles deb --ci
+}
+
+package() {
+  cd "$pkgname"
+  local tree=(src-tauri/target/release/bundle/deb/*/data/usr)
+  cp -a "${tree[0]}" "$pkgdir/"
+  # Иконки, которых нет в deb: векторная (для любых размеров) и крупные PNG.
+  local icons="$pkgdir/usr/share/icons/hicolor"
+  install -Dm644 src-tauri/icons/source/notivelle.svg "$icons/scalable/apps/$pkgname.svg"
+  install -Dm644 src-tauri/icons/128x128@2x.png "$icons/256x256/apps/$pkgname.png"
+  install -Dm644 src-tauri/icons/icon.png "$icons/512x512/apps/$pkgname.png"
+  # Лицензии словарей орфографии, вшитых в программу.
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname/" \
+    src-tauri/dictionaries/*.LICENSE src-tauri/dictionaries/README.md
+}

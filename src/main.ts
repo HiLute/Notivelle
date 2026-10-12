@@ -7,7 +7,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { applyAppearance, onThemeChange } from "./appearance";
-import { documentIdFacet, type LinkHandlers, linkHandlersFacet } from "./editor/context";
+import { documentId, type LinkHandlers, linkHandlersFacet } from "./editor/context";
 import { runEditorKeymapInLatin } from "./editor/layout-keys";
 import { editorExtensions } from "./editor/setup";
 import { setSpellcheckErrorHandler } from "./editor/spellcheck";
@@ -18,7 +18,6 @@ import { loadSettings, onSettingsChange } from "./settings";
 import { SettingsPanel } from "./settings-panel";
 import { StatusBar } from "./statusbar";
 import { TabBar } from "./tabbar";
-import welcomeDoc from "./welcome.md?raw";
 import { Workspace } from "./workspace";
 
 function requireElement(id: string): HTMLElement {
@@ -37,15 +36,16 @@ const links: LinkHandlers = {
 };
 
 /**
- * Состояние редактора для нового документа: свежая история отмены.
- * `id` — документ, к которому относятся картинки и блоки Live Preview.
+ * Состояние редактора для документа: свежая история отмены. `id` —
+ * документ, к которому относятся картинки и блоки Live Preview (null — новый
+ * документ, ещё не сохранённый в файл).
  */
 function createState(text: string, id: DocumentId | null): EditorState {
   return EditorState.create({
     doc: text,
     extensions: [
       editorExtensions(),
-      documentIdFacet.of(id),
+      documentId(id),
       linkHandlersFacet.of(links),
       EditorView.updateListener.of((update) => {
         // `workspace` объявлена ниже, но слушатель срабатывает только на
@@ -58,7 +58,8 @@ function createState(text: string, id: DocumentId | null): EditorState {
 }
 
 const editorHost = requireElement("editor");
-const view = new EditorView({ parent: editorHost, state: createState(welcomeDoc, null) });
+// Начальное состояние сразу заменит вкладка нового документа (Workspace).
+const view = new EditorView({ parent: editorHost, state: createState("", null) });
 // `workspace` объявлена ниже; чекбоксы нажимают только после запуска.
 const reading = new ReadingView(requireElement("reading"), links, (line) => workspace.toggleTask(line));
 const workspace = new Workspace({
@@ -126,6 +127,8 @@ function shortcutAction(event: KeyboardEvent): (() => void) | null {
   }
 
   switch (shortcutLetter(event)) {
+    case "n":
+      return () => workspace.newDocument();
     case "o":
       return () => void workspace.openWithDialog();
     case "s":
@@ -189,6 +192,7 @@ async function init(): Promise<void> {
   } catch (error) {
     showError(`Настройки не загружены: ${errorMessage(error)}`);
   }
+  workspace.settingsLoaded();
 
   // Если страница перезагрузилась (при разработке Vite делает это после
   // правок кода), Rust ещё помнит открытые файлы: возвращаем их вкладки.
@@ -207,7 +211,7 @@ async function init(): Promise<void> {
 
   try {
     const info = await api.appInfo();
-    workspace.welcomeLabel = `${info.name} ${info.version} · Tauri ${info.tauriVersion} · ${info.os}`;
+    settingsPanel.about = `${info.name} ${info.version} · Tauri ${info.tauriVersion} · ${info.os}`;
   } catch (error) {
     statusBar.showMessage(`Нет связи с Rust-частью: ${errorMessage(error)}`, "error");
   }

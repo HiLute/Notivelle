@@ -322,17 +322,21 @@ impl Documents {
         Ok(format.into())
     }
 
+    /// Записывает новый документ («Без названия») в файл `path` и
+    /// регистрирует его, как будто этот файл открыли. Новый файл — UTF-8 без
+    /// BOM, переводы строк LF.
+    ///
+    /// Если файл с таким путём уже открыт (его заменили через «Сохранить
+    /// как»), возвращает [`Opened::AlreadyOpen`]: та вкладка перечитает файл
+    /// сама, когда watcher заметит изменение.
+    pub fn save_new(&self, path: &Path, text: &str) -> Result<Opened, AppError> {
+        disk::write(path, &document::encode(text, TextFormat::default()))?;
+        self.open(path)
+    }
+
     /// Забывает документ. Закрыть уже закрытый документ — не ошибка.
     pub fn close(&self, id: DocumentId) {
         self.lock().remove(&id);
-    }
-
-    /// Имя файла документа для диалогов.
-    pub fn file_name(&self, id: DocumentId) -> Result<String, AppError> {
-        self.lock()
-            .get(&id)
-            .map(|entry| display_name(&entry.path))
-            .ok_or(AppError::UnknownDocument(id))
     }
 
     /// Папка документа: от неё считаются относительные пути картинок и ссылок.
@@ -629,6 +633,29 @@ mod tests {
 
         assert!(!format.mixed_line_endings);
         assert_eq!(fs::read(&path).unwrap(), b"a\r\nb\r\nc\r\nd\r\n");
+    }
+
+    #[test]
+    fn new_document_is_written_and_registered() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Без названия.md");
+        let documents = Documents::default();
+
+        let document = match documents.save_new(&path, "# Новый\n\nтекст\n").unwrap() {
+            Opened::New(document) => document,
+            other @ Opened::AlreadyOpen(_) => panic!("ожидали новый документ, получили {other:?}"),
+        };
+        assert_eq!(fs::read(&path).unwrap(), "# Новый\n\nтекст\n".as_bytes());
+        assert_eq!(document.file_name, "Без названия.md");
+        assert_eq!(document.format.line_ending, LineEnding::Lf);
+        assert!(!document.format.has_bom);
+
+        // Тот же путь ещё раз — файл перезаписан, а документ уже открыт.
+        assert!(matches!(
+            documents.save_new(&path, "другой\n").unwrap(),
+            Opened::AlreadyOpen(id) if id == document.id
+        ));
+        assert_eq!(fs::read(&path).unwrap(), "другой\n".as_bytes());
     }
 
     #[test]
