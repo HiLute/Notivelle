@@ -62,7 +62,11 @@ pub fn content_hash(bytes: &[u8]) -> u64 {
 }
 
 /// Что сейчас лежит на диске по сравнению с тем, что мы прочитали или записали.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Уходит и во фронтенд (событие слежения за файлами, `watcher.rs`) строкой
+/// `"unchanged"`, `"modified"` или `"missing"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum DiskState {
     Unchanged,
     Modified,

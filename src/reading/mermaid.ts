@@ -1,3 +1,5 @@
+import { shownTheme } from "../appearance";
+
 type Mermaid = (typeof import("mermaid"))["default"];
 
 /**
@@ -5,10 +7,11 @@ type Mermaid = (typeof import("mermaid"))["default"];
  * диаграмме: `import()` выносит его в отдельный файл сборки.
  */
 let loading: Promise<Mermaid> | null = null;
-let initializedTheme: string | null = null;
+/** Тема и шрифт, с которыми Mermaid настроен сейчас. */
+let initializedStyle: string | null = null;
 let counter = 0;
 
-/** Готовые SVG по теме и тексту диаграммы: повторный показ не перерисовывает. */
+/** Готовые SVG по теме, шрифту и тексту диаграммы: повторный показ не перерисовывает. */
 const cache = new Map<string, string>();
 const CACHE_LIMIT = 100;
 
@@ -23,16 +26,20 @@ export async function renderMermaid(root: HTMLElement): Promise<void> {
   if (blocks.length === 0) return;
 
   const mermaid = await loadMermaid();
-  const theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default";
-  if (initializedTheme !== theme) {
+  const theme = shownTheme() === "dark" ? "dark" : "default";
+  // Подписи — шрифтом текста документа. Значение переменной приходит уже
+  // с подставленными var(), то есть готовым списком шрифтов.
+  const fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--font-text").trim();
+  const style = `${theme}\u0000${fontFamily}`;
+  if (initializedStyle !== style) {
     mermaid.initialize({
       startOnLoad: false,
       // strict: подписи экранируются, клики и скрипты в диаграммах отключены.
       securityLevel: "strict",
       theme,
-      fontFamily: getComputedStyle(document.body).fontFamily,
+      fontFamily,
     });
-    initializedTheme = theme;
+    initializedStyle = style;
   }
 
   for (const code of blocks) {
@@ -45,7 +52,7 @@ export async function renderMermaid(root: HTMLElement): Promise<void> {
     if (pre.dataset.sourcepos) diagram.dataset.sourcepos = pre.dataset.sourcepos;
 
     try {
-      diagram.innerHTML = await renderSvg(mermaid, theme, source);
+      diagram.innerHTML = await renderSvg(mermaid, style, source);
     } catch (error) {
       diagram.classList.add("mermaid-error");
       diagram.textContent = `Ошибка в диаграмме Mermaid: ${error instanceof Error ? error.message : String(error)}`;
@@ -54,8 +61,8 @@ export async function renderMermaid(root: HTMLElement): Promise<void> {
   }
 }
 
-async function renderSvg(mermaid: Mermaid, theme: string, source: string): Promise<string> {
-  const key = `${theme}\u0000${source}`;
+async function renderSvg(mermaid: Mermaid, style: string, source: string): Promise<string> {
+  const key = `${style}\u0000${source}`;
   const cached = cache.get(key);
   if (cached !== undefined) return cached;
 

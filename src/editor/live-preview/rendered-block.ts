@@ -1,5 +1,6 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 
+import { renderedStyle } from "../../appearance";
 import { api, type DocumentId } from "../../ipc";
 import { addCopyButtons, highlightCodeBlocks } from "../../reading/code";
 import { decorateCallouts } from "../../reading/icons";
@@ -55,6 +56,8 @@ export function rememberBlockHeight(key: string, height: number): void {
  */
 export class RenderedBlockWidget extends WidgetType {
   readonly #key: string;
+  /** Тема и шрифт, с которыми нарисованы диаграммы: сменятся — блок перерисуется. */
+  readonly style = renderedStyle();
 
   constructor(
     readonly source: string,
@@ -65,7 +68,7 @@ export class RenderedBlockWidget extends WidgetType {
   }
 
   override eq(other: RenderedBlockWidget): boolean {
-    return other.source === this.source && other.documentId === this.documentId;
+    return other.source === this.source && other.documentId === this.documentId && other.style === this.style;
   }
 
   override get estimatedHeight(): number {

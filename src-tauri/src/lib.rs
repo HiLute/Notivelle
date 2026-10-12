@@ -13,6 +13,9 @@
 //! - `callouts` — типы и разбор callouts в стиле Obsidian;
 //! - `assets` — протокол `mdimg://` для локальных картинок, пути из ссылок;
 //! - `spellcheck` — проверка орфографии (ru, en) и личный словарь;
+//! - `watcher` — слежение за открытыми файлами на диске;
+//! - `config` — настройки в `settings.toml`;
+//! - `fonts` — шрифты, установленные в системе;
 //! - `dialogs` — системные диалоги;
 //! - `commands` — команды для фронтенда;
 //! - `error` — общий тип ошибки.
@@ -20,21 +23,26 @@
 mod assets;
 mod callouts;
 mod commands;
+mod config;
 mod dialogs;
 mod disk;
 mod document;
 mod documents;
 mod error;
+mod fonts;
 mod pending;
 mod render;
 mod spellcheck;
+mod watcher;
 
 use std::path::Path;
 
+use config::Config;
 use documents::Documents;
 use pending::PendingFiles;
 use spellcheck::PersonalDictionary;
 use tauri::{DragDropEvent, Manager, WindowEvent};
+use watcher::FileWatcher;
 
 /// Собирает и запускает Tauri-приложение.
 ///
@@ -94,12 +102,11 @@ pub fn run() -> tauri::Result<()> {
             // Личный словарь — в каталоге конфигурации
             // (на Linux `~/.config/dev.maksim.md-editor/`).
             spellcheck::preload();
-            let dictionary_path = app
-                .path()
-                .app_config_dir()
-                .ok()
-                .map(|dir| dir.join("dictionary.txt"));
-            app.manage(PersonalDictionary::load(dictionary_path));
+            let config_dir = app.path().app_config_dir().ok();
+            let config_file = |name: &str| config_dir.as_ref().map(|dir| dir.join(name));
+            app.manage(PersonalDictionary::load(config_file("dictionary.txt")));
+            app.manage(Config::load(config_file("settings.toml")));
+            app.manage(FileWatcher::start(app.handle()));
             Ok(())
         })
         // Файлы, перетащенные в окно. Tauri отдаёт пути и во фронтенд, но мы
@@ -125,6 +132,10 @@ pub fn run() -> tauri::Result<()> {
             commands::spell_check,
             commands::spell_suggest,
             commands::spell_add_word,
+            commands::reload_document,
+            commands::get_settings,
+            commands::save_settings,
+            commands::list_fonts,
         ])
         .run(tauri::generate_context!())
 }

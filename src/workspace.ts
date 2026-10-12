@@ -1,12 +1,25 @@
-import type { EditorState, Text } from "@codemirror/state";
+import type { ChangeSpec, EditorState, Text } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { refreshRenderedBlocks } from "./editor/live-preview/blocks";
 import { scrollToLine, topVisibleLine } from "./editor/scroll";
-import { setLivePreview } from "./editor/setup";
+import { applyEditorSettings, setLivePreview } from "./editor/setup";
 import { toggleTaskOnLine } from "./editor/tasks";
-import { api, errorMessage, type DocumentId, type FormatInfo, type OpenOutcome, type OpenedDocument } from "./ipc";
-import { DEFAULT_EDITING_MODE, type EditingMode, type ViewMode } from "./modes";
+import {
+  api,
+  type DiskChange,
+  type DiskState,
+  errorMessage,
+  type DocumentId,
+  type FormatInfo,
+  type OpenOutcome,
+  type OpenedDocument,
+} from "./ipc";
+import type { EditingMode, ViewMode } from "./modes";
+import type { NoticeBar } from "./notice";
+import { currentSettings } from "./settings";
+import { textChange } from "./text-diff";
 import type { ReadingView } from "./reading/view";
 import type { StatusBar } from "./statusbar";
 import type { TabBar } from "./tabbar";
@@ -49,6 +62,10 @@ interface Tab extends Page {
   scroll: ScrollSnapshot | null;
   /** Текст на момент открытия или последнего сохранения. */
   savedDoc: Text;
+  /** Что с файлом на диске (сообщает Rust, watcher.rs). */
+  diskState: DiskState;
+  /** Плашку про изменение на диске закрыли — до следующего изменения. */
+  noticeDismissed: boolean;
 }
 
 export interface WorkspaceParts {
@@ -59,6 +76,7 @@ export interface WorkspaceParts {
   reading: ReadingView;
   statusBar: StatusBar;
   tabBar: TabBar;
+  notice: NoticeBar;
 }
 
 /**
@@ -75,16 +93,12 @@ export class Workspace {
   readonly #reading: ReadingView;
   readonly #statusBar: StatusBar;
   readonly #tabBar: TabBar;
+  readonly #notice: NoticeBar;
   #tabs: Tab[] = [];
   #active: Tab | null = null;
   /** Приветственная страница; её состояние хранится, пока открыта вкладка. */
   #welcome: EditorState;
-  readonly #welcomePage: Page = {
-    mode: DEFAULT_EDITING_MODE,
-    editingMode: DEFAULT_EDITING_MODE,
-    rendered: null,
-    readingLine: null,
-  };
+  readonly #welcomePage: Page = { ...initialModes(), rendered: null, readingLine: null };
   #welcomeLabel = "Приветственная страница";
   /** Идёт операция с диалогом: вторую параллельно не запускаем. */
   #busy = false;
@@ -102,10 +116,53 @@ export class Workspace {
     this.#reading = parts.reading;
     this.#statusBar = parts.statusBar;
     this.#tabBar = parts.tabBar;
+    this.#notice = parts.notice;
     this.#welcome = parts.view.state;
     parts.tabBar.onActivate = (id) => this.activate(id);
     parts.tabBar.onClose = (id) => void this.close(id);
+    parts.notice.onDismiss = () => {
+      if (this.#active) this.#active.noticeDismissed = true;
+      this.#refreshNotice();
+    };
     this.#refresh();
+  }
+
+  /**
+   * Настройки изменились: редактор (Vim, орфография) подстраивается сразу.
+   * Режим по умолчанию касается только новых вкладок.
+   */
+  applySettings(): void {
+    applyEditorSettings(this.#view);
+    // Шрифт или его размер могли смениться: высоты строк — другие.
+    this.#view.requestMeasure();
+  }
+
+  /**
+   * Сменилась тема или шрифт текста: диаграммы Mermaid нарисованы в цветах
+   * темы и этим шрифтом, их нужно перерисовать — и в режиме чтения, и в
+   * блоках Live Preview.
+   */
+  refreshRendered(): void {
+    for (const page of [this.#welcomePage, ...this.#tabs]) page.rendered = null;
+    if (this.#page().mode === "reading") void this.#applyMode();
+    else this.#view.dispatch({ effects: refreshRenderedBlocks.of(null) });
+  }
+
+  /**
+   * Файл открытого документа изменился на диске (событие от Rust). Вкладка
+   * без правок перечитывает его сама; на вкладке с правками появляется
+   * плашка с выбором.
+   */
+  async handleDiskChange(change: DiskChange): Promise<void> {
+    const tab = this.#tabs.find((candidate) => candidate.id === change.id);
+    if (!tab) return;
+    tab.diskState = change.state;
+    tab.noticeDismissed = false;
+    if (change.state === "modified" && !this.#isDirty(tab)) {
+      await this.#reloadFromDisk(tab, `«${tab.fileName}» обновлён: файл изменила другая программа`);
+      return;
+    }
+    this.#refreshNotice();
   }
 
   get hasTabs(): boolean {
@@ -173,6 +230,11 @@ export class Workspace {
     }
     this.#stashActive();
     this.#show(tab);
+  }
+
+  /** Фокус в документ: редактор или режим чтения. */
+  focus(): void {
+    this.#focusContent();
   }
 
   /** Ctrl+Tab / Ctrl+Shift+Tab: соседняя вкладка по кругу. */
@@ -346,11 +408,78 @@ export class Workspace {
       state,
       scroll: null,
       savedDoc: state.doc,
-      mode: DEFAULT_EDITING_MODE,
-      editingMode: DEFAULT_EDITING_MODE,
+      diskState: "unchanged",
+      noticeDismissed: false,
+      ...initialModes(),
       rendered: null,
       readingLine: null,
     };
+  }
+
+  /**
+   * Берёт текст файла с диска. Текст заменяется одной правкой, а не новым
+   * состоянием редактора: курсор остаётся на месте, а Ctrl+Z вернёт текст,
+   * который был до перечитывания.
+   */
+  async #reloadFromDisk(tab: Tab, message: string): Promise<void> {
+    let document: OpenedDocument;
+    try {
+      document = await api.reloadDocument(tab.id);
+    } catch (error) {
+      this.#statusBar.showMessage(errorMessage(error), "error");
+      return;
+    }
+    if (!this.#tabs.includes(tab)) return;
+
+    const change: ChangeSpec = textChange(this.#docOf(tab).toString(), document.text);
+    if (tab === this.#active) {
+      this.#view.dispatch({ changes: change, userEvent: "input.reload" });
+    } else {
+      tab.state = tab.state.update({ changes: change, userEvent: "input.reload" }).state;
+    }
+    tab.savedDoc = this.#docOf(tab);
+    tab.format = {
+      lineEnding: document.lineEnding,
+      hasBom: document.hasBom,
+      mixedLineEndings: document.mixedLineEndings,
+    };
+    tab.diskState = "unchanged";
+    tab.rendered = null;
+    if (tab === this.#active) {
+      this.#activeDirty = false;
+      if (tab.mode === "reading") void this.#applyMode();
+    }
+    this.#refresh();
+    this.#statusBar.showMessage(message);
+  }
+
+  /** Плашка про файл на диске у активной вкладки. */
+  #refreshNotice(): void {
+    const tab = this.#active;
+    if (!tab || tab.noticeDismissed || tab.diskState === "unchanged") {
+      this.#notice.hide();
+      return;
+    }
+    if (tab.diskState === "modified") {
+      this.#notice.show(`Файл «${tab.fileName}» изменила другая программа, а здесь есть несохранённые правки.`, [
+        {
+          label: "Загрузить с диска",
+          run: () => void this.#reloadFromDisk(tab, `«${tab.fileName}» загружен с диска. Ctrl+Z вернёт ваши правки`),
+        },
+        {
+          label: "Оставить мои",
+          run: () => {
+            tab.noticeDismissed = true;
+            this.#refreshNotice();
+          },
+        },
+      ]);
+    } else {
+      this.#notice.show(`Файл «${tab.fileName}» удалили или переместили.`, [
+        { label: "Сохранить заново", run: () => void this.save() },
+        { label: "Закрыть вкладку", run: () => void this.close(tab.id) },
+      ]);
+    }
   }
 
   /** Текущая страница: активная вкладка или приветственная. */
@@ -374,6 +503,8 @@ export class Workspace {
   #show(tab: Tab | null): void {
     this.#active = tab;
     this.#view.setState(tab ? tab.state : this.#welcome);
+    // Настройки могли поменяться, пока вкладка была в фоне.
+    applyEditorSettings(this.#view);
     if (tab?.scroll) this.#view.dispatch({ effects: tab.scroll });
     this.#activeDirty = tab !== null && this.#isDirty(tab);
     this.#statusBar.setCursor(this.#view.state);
@@ -458,6 +589,7 @@ export class Workspace {
     if (!format) return false;
     tab.savedDoc = doc;
     tab.format = format;
+    tab.diskState = "unchanged";
     if (tab === this.#active) this.#activeDirty = this.#isDirty(tab);
     this.#refresh();
     return true;
@@ -507,6 +639,8 @@ export class Workspace {
     this.#statusBar.setFormat(tab?.format ?? null);
     this.#statusBar.setMode(this.#page().mode);
 
+    this.#refreshNotice();
+
     const title = tab ? `${this.#activeDirty ? "● " : ""}${tab.fileName} — ${APP_TITLE}` : APP_TITLE;
     // Заголовок меняется через IPC, поэтому дёргаем его только при изменении.
     if (title !== this.#shownTitle) {
@@ -514,6 +648,12 @@ export class Workspace {
       void getCurrentWindow().setTitle(title);
     }
   }
+}
+
+/** Режим новой вкладки — из настроек. Из чтения Ctrl+E ведёт в Live Preview. */
+function initialModes(): Pick<Page, "mode" | "editingMode"> {
+  const mode = currentSettings().default_mode;
+  return { mode, editingMode: mode === "reading" ? "live" : mode };
 }
 
 /**

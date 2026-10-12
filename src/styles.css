@@ -1,84 +1,67 @@
 /*
  * Дизайн-токены приложения. Все цвета задаются здесь, а редактор
  * (src/editor/theme.ts) ссылается на них через var(--…).
- * Пока тема выбирается только по системной (prefers-color-scheme);
- * ручное переключение появится с настройками на этапе M6.
+ *
+ * Цвет — пара `light-dark(светлый, тёмный)`; какой из двух взять, решает
+ * свойство `color-scheme`. По умолчанию оно `light dark` — тема как в
+ * системе; тема из настроек (appearance.ts) ставит на <html> атрибут
+ * data-theme и сужает его до одной.
  */
 :root {
   color-scheme: light dark;
-
-  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif;
-  --font-text: var(--font-ui);
-  --font-mono: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, "Cascadia Code",
+  /* Шрифты по умолчанию. Шрифт из настроек встаёт перед ними
+     (appearance.ts), а они остаются запасными: если выбранного шрифта нет
+     или в нём нет нужных букв, текст не превратится в квадратики. */
+  --font-ui-default: "Inter", system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif;
+  --font-text-default: var(--font-ui-default);
+  --font-mono-default: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, "Cascadia Code",
     "DejaVu Sans Mono", monospace;
+  --font-ui: var(--font-ui-default);
+  --font-text: var(--font-text-default);
+  --font-mono: var(--font-mono-default);
   --editor-font-size: 16px;
   --editor-padding: 1.5rem;
   --line-width: 46rem;
 
-  /* Светлая тема */
-  --background-primary: #ffffff;
-  --background-secondary: #f5f5f7;
-  --border: #e4e4e7;
-  --border-strong: #cfcfd4;
-  --background-hover: #e9e9ec;
-  --text-normal: #222326;
-  --text-heading: #141517;
-  --text-muted: #5c5f66;
-  --text-faint: #9a9da5;
-  --text-error: #d93636;
-  --accent: #7c4dff;
-  --link: #6a40e6;
-  --selection: rgb(124 77 255 / 0.18);
-  --selection-match: rgb(124 77 255 / 0.1);
-  --search-match: rgb(255 196 0 / 0.35);
-  --search-match-border: rgb(204 150 0 / 0.6);
-  --search-match-selected: rgb(255 150 0 / 0.5);
-  --code-background: #f2f2f4;
-  --mark-background: rgb(255 208 0 / 0.4);
+  /* Цвета: light-dark(светлая тема, тёмная тема) */
+  --background-primary: light-dark(#ffffff, #1e1e1e);
+  --background-secondary: light-dark(#f5f5f7, #262626);
+  --border: light-dark(#e4e4e7, #333333);
+  --border-strong: light-dark(#cfcfd4, #474747);
+  --background-hover: light-dark(#e9e9ec, #303030);
+  --text-normal: light-dark(#222326, #dcddde);
+  --text-heading: light-dark(#141517, #f2f2f2);
+  --text-muted: light-dark(#5c5f66, #a3a3a3);
+  --text-faint: light-dark(#9a9da5, #6f6f6f);
+  --text-error: light-dark(#d93636, #fb6464);
+  --accent: light-dark(#7c4dff, #a882ff);
+  --link: light-dark(#6a40e6, #a882ff);
+  --selection: light-dark(rgb(124 77 255 / 0.18), rgb(168 130 255 / 0.28));
+  --selection-match: light-dark(rgb(124 77 255 / 0.1), rgb(168 130 255 / 0.14));
+  --search-match: light-dark(rgb(255 196 0 / 0.35), rgb(255 200 0 / 0.22));
+  --search-match-border: light-dark(rgb(204 150 0 / 0.6), rgb(255 200 0 / 0.45));
+  --search-match-selected: light-dark(rgb(255 150 0 / 0.5), rgb(255 150 0 / 0.4));
+  --code-background: light-dark(#f2f2f4, #262626);
+  --mark-background: light-dark(rgb(255 208 0 / 0.4), rgb(255 208 0 / 0.3));
 
-  --code-keyword: #a626a4;
-  --code-string: #50a14f;
-  --code-number: #986801;
-  --code-comment: #a0a1a7;
-  --code-function: #4078f2;
-  --code-type: #c18401;
-  --code-property: #e45649;
-  --code-tag: #e45649;
-  --code-operator: #0184bc;
+  /* Подсветка кода */
+  --code-keyword: light-dark(#a626a4, #c678dd);
+  --code-string: light-dark(#50a14f, #98c379);
+  --code-number: light-dark(#986801, #d19a66);
+  --code-comment: light-dark(#a0a1a7, #7f848e);
+  --code-function: light-dark(#4078f2, #61afef);
+  --code-type: light-dark(#c18401, #e5c07b);
+  --code-property: light-dark(#e45649, #e06c75);
+  --code-tag: light-dark(#e45649, #e06c75);
+  --code-operator: light-dark(#0184bc, #56b6c2);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background-primary: #1e1e1e;
-    --background-secondary: #262626;
-    --border: #333333;
-    --border-strong: #474747;
-    --background-hover: #303030;
-    --code-background: #262626;
-    --mark-background: rgb(255 208 0 / 0.3);
-    --text-normal: #dcddde;
-    --text-heading: #f2f2f2;
-    --text-muted: #a3a3a3;
-    --text-faint: #6f6f6f;
-    --text-error: #fb6464;
-    --accent: #a882ff;
-    --link: #a882ff;
-    --selection: rgb(168 130 255 / 0.28);
-    --selection-match: rgb(168 130 255 / 0.14);
-    --search-match: rgb(255 200 0 / 0.22);
-    --search-match-border: rgb(255 200 0 / 0.45);
-    --search-match-selected: rgb(255 150 0 / 0.4);
+:root[data-theme="light"] {
+  color-scheme: light;
+}
 
-    --code-keyword: #c678dd;
-    --code-string: #98c379;
-    --code-number: #d19a66;
-    --code-comment: #7f848e;
-    --code-function: #61afef;
-    --code-type: #e5c07b;
-    --code-property: #e06c75;
-    --code-tag: #e06c75;
-    --code-operator: #56b6c2;
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 *,
@@ -105,8 +88,8 @@ body {
    «tabs» просто становится нулевой высоты и ничего не съезжает. */
 #app {
   display: grid;
-  grid-template-areas: "tabs" "editor" "status";
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "tabs" "notice" "editor" "status";
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   /* Без явной колонки она растягивается до min-content содержимого
      (например, длинного пути в строке состояния) шире окна. */
   grid-template-columns: minmax(0, 1fr);
@@ -212,6 +195,70 @@ body {
   color: var(--accent);
 }
 
+/* ---------- Плашка над редактором (notice.ts) ---------- */
+
+.notice {
+  grid-area: notice;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 12%, var(--background-secondary));
+  color: var(--text-normal);
+  font-size: 13px;
+}
+
+.notice[hidden] {
+  display: none;
+}
+
+.notice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.notice-button {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font: inherit;
+  cursor: pointer;
+}
+
+.notice-button:hover {
+  border-color: var(--accent);
+}
+
+.notice-close {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.notice-close::before {
+  content: "×";
+  font-size: 17px;
+  line-height: 1;
+}
+
+.notice-close:hover {
+  background: var(--background-hover);
+  color: var(--text-normal);
+}
+
 /* ---------- Перетаскивание файлов ---------- */
 
 .drop-overlay {
@@ -304,3 +351,56 @@ body {
   color: var(--background-primary);
 }
 
+
+/* Кнопка-иконка в строке состояния: настройки. */
+.statusbar-button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 20px;
+  margin-left: -0.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.statusbar-button:hover {
+  background: var(--background-hover);
+  color: var(--text-normal);
+}
+
+.statusbar-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ---------- Vim (@replit/codemirror-vim) ---------- */
+
+/* Строка режима и ввод команд `:` внизу редактора. */
+.cm-vim-panel {
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.cm-vim-panel input {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-normal);
+  font: inherit;
+}
+
+/* Блочный курсор Vim — акцентным цветом темы, а не розовым по умолчанию. */
+.cm-editor .cm-vimCursorLayer .cm-fat-cursor {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.cm-editor:not(.cm-focused) .cm-vimCursorLayer .cm-fat-cursor {
+  background: none;
+  outline-color: var(--accent);
+}

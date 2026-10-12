@@ -15,13 +15,16 @@ use tauri::{Manager, State, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::assets;
+use crate::config::{Config, LoadedSettings, Settings};
 use crate::dialogs::{self, UnsavedChoice};
 use crate::document;
-use crate::documents::{DocumentId, Documents, FormatInfo, OpenOutcome};
+use crate::documents::{DocumentId, Documents, FormatInfo, OpenOutcome, OpenedDocument};
 use crate::error::AppError;
+use crate::fonts::{self, FontFamily};
 use crate::pending::PendingFiles;
 use crate::render;
 use crate::spellcheck::{self, PersonalDictionary};
+use crate::watcher::FileWatcher;
 
 /// Сведения о сборке для строки состояния.
 ///
@@ -65,7 +68,9 @@ pub fn app_info() -> AppInfo {
 pub async fn take_pending_documents(window: WebviewWindow) -> Result<Vec<OpenOutcome>, AppError> {
     run_blocking(window, |window, documents| {
         let paths = window.state::<PendingFiles>().take();
-        Ok(documents.open_all(&paths))
+        let outcomes = documents.open_all(&paths);
+        watch_open_files(window, documents);
+        Ok(outcomes)
     })
     .await
 }
@@ -74,7 +79,12 @@ pub async fn take_pending_documents(window: WebviewWindow) -> Result<Vec<OpenOut
 /// страницы: если страница перезагрузилась, вкладки восстановятся.
 #[tauri::command]
 pub async fn restore_documents(window: WebviewWindow) -> Result<Vec<OpenOutcome>, AppError> {
-    run_blocking(window, |_, documents| Ok(documents.reopen_all())).await
+    run_blocking(window, |window, documents| {
+        let outcomes = documents.reopen_all();
+        watch_open_files(window, documents);
+        Ok(outcomes)
+    })
+    .await
 }
 
 /// Показывает диалог открытия и открывает выбранные файлы.
@@ -83,7 +93,9 @@ pub async fn restore_documents(window: WebviewWindow) -> Result<Vec<OpenOutcome>
 pub async fn open_document_dialog(window: WebviewWindow) -> Result<Vec<OpenOutcome>, AppError> {
     run_blocking(window, |window, documents| {
         let paths = dialogs::pick_markdown_files(window);
-        Ok(documents.open_all(&paths))
+        let outcomes = documents.open_all(&paths);
+        watch_open_files(window, documents);
+        Ok(outcomes)
     })
     .await
 }
@@ -188,7 +200,7 @@ pub async fn open_link(
     id: DocumentId,
     href: String,
 ) -> Result<Vec<OpenOutcome>, AppError> {
-    run_blocking(window, move |_, documents| {
+    run_blocking(window, move |window, documents| {
         let link_error = |reason: &str| AppError::Link {
             href: href.clone(),
             reason: reason.to_owned(),
@@ -199,7 +211,9 @@ pub async fn open_link(
             return Err(link_error("по ссылкам открываются только Markdown-файлы"));
         }
         let path = documents.directory(id)?.join(target);
-        Ok(documents.open_all(&[path]))
+        let outcomes = documents.open_all(&[path]);
+        watch_open_files(window, documents);
+        Ok(outcomes)
     })
     .await
 }
@@ -242,8 +256,60 @@ pub async fn spell_add_word(window: WebviewWindow, word: String) -> Result<(), A
     clippy::needless_pass_by_value,
     reason = "Tauri передаёт State в команду только по значению"
 )]
-pub fn close_document(documents: State<'_, Documents>, id: DocumentId) {
+pub fn close_document(
+    documents: State<'_, Documents>,
+    watcher: State<'_, FileWatcher>,
+    id: DocumentId,
+) {
     documents.close(id);
+    watcher.sync(&documents);
+}
+
+/// Перечитывает документ с диска: файл изменила другая программа.
+#[tauri::command]
+pub async fn reload_document(
+    window: WebviewWindow,
+    id: DocumentId,
+) -> Result<OpenedDocument, AppError> {
+    run_blocking(window, move |_, documents| documents.reload(id)).await
+}
+
+/// Настройки и проблема с файлом настроек, если была.
+#[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri передаёт State в команду только по значению"
+)]
+pub fn get_settings(config: State<'_, Config>) -> LoadedSettings {
+    config.current()
+}
+
+/// Сохраняет настройки; возвращает их приведёнными к допустимым значениям.
+#[tauri::command]
+pub async fn save_settings(
+    window: WebviewWindow,
+    settings: Settings,
+) -> Result<Settings, AppError> {
+    run_blocking(window, move |window, _| {
+        window.state::<Config>().save(settings)
+    })
+    .await
+}
+
+/// Шрифты, установленные в системе, — для выбора в настройках.
+///
+/// Каждый вызов обходит каталоги шрифтов заново: шрифт, установленный при
+/// открытой программе, появится в списке при следующем открытии настроек.
+#[tauri::command]
+pub async fn list_fonts() -> Result<Vec<FontFamily>, AppError> {
+    tauri::async_runtime::spawn_blocking(fonts::system_fonts)
+        .await
+        .map_err(|err| AppError::Internal(format!("список шрифтов не получен: {err}")))
+}
+
+/// После открытия файлов следим и за их папками (`watcher.rs`).
+fn watch_open_files(window: &WebviewWindow, documents: &Documents) {
+    window.state::<FileWatcher>().sync(documents);
 }
 
 /// Выполняет блокирующую работу (диск, диалоги) в отдельном потоке.

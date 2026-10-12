@@ -32,6 +32,10 @@ percent-encoding = "2.3.2"
 tauri-plugin-opener = "2"
 # Проверка орфографии по словарям Hunspell, на чистом Rust.
 spellbook = "0.3"
+notify = "8.2.0"
+toml = "1.1.8"
+fontdb = "0.24.0"
+ttf-parser = "0.25.1"
 
 [dev-dependencies]
 proptest = "1.12.0"

@@ -2,6 +2,7 @@ import type { EditorState } from "@codemirror/state";
 import bookOpen from "lucide-static/icons/book-open.svg?raw";
 import codeXml from "lucide-static/icons/code-xml.svg?raw";
 import penLine from "lucide-static/icons/pen-line.svg?raw";
+import settingsIcon from "lucide-static/icons/settings.svg?raw";
 
 import type { FormatInfo } from "./ipc";
 import { MODE_LABELS, type ViewMode } from "./modes";
@@ -30,6 +31,8 @@ const MODE_HINTS: Record<ViewMode, string> = {
 export class StatusBar {
   /** Пользователь выбрал режим в переключателе. */
   onModeChange: (mode: ViewMode) => void = () => {};
+  /** Нажата кнопка настроек. */
+  onOpenSettings: () => void = () => {};
 
   readonly #file: HTMLElement;
   readonly #message: HTMLElement;
@@ -44,6 +47,16 @@ export class StatusBar {
     this.#format = part(root, "format");
     this.#cursor = part(root, "cursor");
     this.#buildModeSwitch(part(root, "mode"));
+
+    const settings = document.createElement("button");
+    settings.type = "button";
+    settings.className = "statusbar-button";
+    settings.title = "Настройки (Ctrl+,)";
+    settings.setAttribute("aria-label", "Настройки");
+    settings.innerHTML = settingsIcon;
+    settings.addEventListener("mousedown", (event) => event.preventDefault());
+    settings.addEventListener("click", () => this.onOpenSettings());
+    root.append(settings);
   }
 
   setFile(text: string, fullPath = ""): void {

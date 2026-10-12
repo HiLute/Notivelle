@@ -198,22 +198,63 @@ impl Documents {
 
         known
             .into_iter()
-            .map(|(id, path)| match load(&path) {
-                Ok((decoded, disk_hash)) => {
-                    if let Some(entry) = self.lock().get_mut(&id) {
-                        entry.format = decoded.format;
-                        entry.disk_hash = disk_hash;
-                    }
-                    OpenOutcome::Opened {
-                        document: opened_document(id, &path, decoded),
-                    }
-                }
+            .map(|(id, path)| match self.reload(id) {
+                Ok(document) => OpenOutcome::Opened { document },
                 Err(err) => {
                     self.close(id);
                     OpenOutcome::Failed {
                         path: path.display().to_string(),
                         message: err.to_string(),
                     }
+                }
+            })
+            .collect()
+    }
+
+    /// Перечитывает документ с диска: файл изменила другая программа, и
+    /// пользователь согласился взять новую версию (или вкладка без правок
+    /// обновляется сама). Дальше сохранение сравнивает диск уже с ней.
+    pub fn reload(&self, id: DocumentId) -> Result<OpenedDocument, AppError> {
+        let path = self
+            .lock()
+            .get(&id)
+            .map(|entry| entry.path.clone())
+            .ok_or(AppError::UnknownDocument(id))?;
+        let (decoded, disk_hash) = load(&path)?;
+        if let Some(entry) = self.lock().get_mut(&id) {
+            entry.format = decoded.format;
+            entry.disk_hash = disk_hash;
+        }
+        Ok(opened_document(id, &path, decoded))
+    }
+
+    /// Канонические пути всех открытых файлов: за их папками следит
+    /// `watcher.rs`.
+    pub fn identities(&self) -> Vec<PathBuf> {
+        self.lock()
+            .values()
+            .map(|entry| entry.identity.clone())
+            .collect()
+    }
+
+    /// Состояние на диске документов с каноническим путём `identity`
+    /// (обычно такой документ один). Читает файлы, поэтому мьютекс на время
+    /// чтения отпускается. Файлы, которые не удалось прочитать (например,
+    /// нет прав), пропускаются: о них нечего сообщить.
+    pub fn disk_states_at(&self, identity: &Path) -> Vec<(DocumentId, DiskState)> {
+        let matching: Vec<(DocumentId, PathBuf, u64)> = self
+            .lock()
+            .iter()
+            .filter(|(_, entry)| entry.identity == identity)
+            .map(|(&id, entry)| (id, entry.path.clone(), entry.disk_hash))
+            .collect();
+        matching
+            .into_iter()
+            .filter_map(|(id, path, hash)| match disk::disk_state(&path, hash) {
+                Ok(state) => Some((id, state)),
+                Err(err) => {
+                    log::warn!("не удалось проверить файл: {err}");
+                    None
                 }
             })
             .collect()
@@ -434,6 +475,51 @@ mod tests {
             documents.save(second_id, "x", false),
             Err(AppError::UnknownDocument(_))
         ));
+    }
+
+    #[test]
+    fn reload_takes_the_new_version_from_disk() {
+        let (_dir, path) = file_with(b"old\n");
+        let documents = Documents::default();
+        let opened = open_new(&documents, &path);
+
+        fs::write(&path, "new\r\n").unwrap();
+        let identity = fs::canonicalize(&path).unwrap();
+        assert_eq!(
+            documents.disk_states_at(&identity),
+            vec![(opened.id, DiskState::Modified)]
+        );
+
+        let reloaded = documents.reload(opened.id).unwrap();
+        assert_eq!(reloaded.text, "new\n");
+        assert_eq!(reloaded.format.line_ending, LineEnding::CrLf);
+        // После перечитывания диск снова совпадает с документом, и
+        // сохранение не считает файл чужим.
+        assert_eq!(
+            documents.disk_states_at(&identity),
+            vec![(opened.id, DiskState::Unchanged)]
+        );
+        documents.save(opened.id, "newer\n", false).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"newer\r\n");
+    }
+
+    #[test]
+    fn disk_states_report_missing_files_and_ignore_others() {
+        let (dir, path) = file_with(b"text\n");
+        let documents = Documents::default();
+        let opened = open_new(&documents, &path);
+        let identity = fs::canonicalize(&path).unwrap();
+        assert_eq!(documents.identities(), vec![identity.clone()]);
+
+        fs::remove_file(&path).unwrap();
+        assert_eq!(
+            documents.disk_states_at(&identity),
+            vec![(opened.id, DiskState::Missing)]
+        );
+        assert_eq!(
+            documents.disk_states_at(&dir.path().join("other.md")),
+            vec![]
+        );
     }
 
     #[test]

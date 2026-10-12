@@ -5,6 +5,7 @@ import {
   Prec,
   type Range,
   type SelectionRange,
+  StateEffect,
   StateField,
 } from "@codemirror/state";
 import { type Command, Decoration, type DecorationSet, EditorView, keymap } from "@codemirror/view";
@@ -41,6 +42,9 @@ export interface ActiveCell extends CellPosition {
   readonly to: number;
 }
 
+/** Нарисовать блоки заново: сменилась тема или шрифт текста, а диаграммы нарисованы ими. */
+export const refreshRenderedBlocks = StateEffect.define<null>();
+
 interface BlocksState {
   readonly decorations: DecorationSet;
   readonly blocks: readonly Block[];
@@ -65,7 +69,8 @@ export const blockPreview = StateField.define<BlocksState>({
     if (
       !transaction.docChanged &&
       !transaction.selection &&
-      syntaxTree(transaction.startState) === syntaxTree(transaction.state)
+      syntaxTree(transaction.startState) === syntaxTree(transaction.state) &&
+      !transaction.effects.some((effect) => effect.is(refreshRenderedBlocks))
     ) {
       return value;
     }

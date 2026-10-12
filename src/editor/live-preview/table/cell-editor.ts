@@ -7,6 +7,7 @@ import { drawSelection, EditorView, keymap } from "@codemirror/view";
 
 import { documentIdFacet, linkHandlersFacet } from "../../context";
 import { markdownSyntaxExtensions } from "../../markdown-syntax";
+import { hasSpellcheck } from "../../setup";
 import { spellcheck } from "../../spellcheck";
 import { markdownHighlightStyle } from "../../theme";
 import { inlinePreview } from "../inline";
@@ -79,7 +80,7 @@ export function createCellEditor(options: CellEditorOptions): EditorView {
         markdown({ base: markdownLanguage, extensions: [markdownSyntaxExtensions], addKeymap: false }),
         syntaxHighlighting(markdownHighlightStyle),
         inlinePreview,
-        spellcheck,
+        hasSpellcheck(main) ? spellcheck : [],
         documentIdFacet.of(main.state.facet(documentIdFacet)),
         linkHandlersFacet.of(main.state.facet(linkHandlersFacet) ?? { openExternal() {}, openLocal() {} }),
         drawSelection(),

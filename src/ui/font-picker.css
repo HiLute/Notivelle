@@ -1,0 +1,247 @@
+/* Выбор шрифта (ui/font-picker.ts): кнопка в строке настроек и всплывающий список. */
+
+.font-picker {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.font-picker-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 15rem;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.font-picker-button:hover {
+  background: var(--background-hover);
+}
+
+.font-picker-button:focus-visible,
+.font-picker-button[aria-expanded="true"] {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+}
+
+.font-picker-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.font-picker-button.is-missing .font-picker-name {
+  color: var(--text-muted);
+}
+
+.font-picker-chevron,
+.font-picker-warning {
+  display: grid;
+  flex: none;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.font-picker-warning {
+  color: var(--text-error);
+}
+
+.font-picker-warning[hidden] {
+  display: none;
+}
+
+.font-picker-chevron svg,
+.font-picker-warning svg {
+  width: 14px;
+  height: 14px;
+}
+
+.font-picker-reset {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.font-picker-reset[hidden] {
+  display: none;
+}
+
+.font-picker-reset:hover {
+  background: var(--background-hover);
+  color: var(--text-normal);
+}
+
+.font-picker-reset:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.font-picker-reset svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Список: position: fixed — координаты считает font-picker.ts. */
+.font-picker-popup {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--background-secondary);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.3);
+  color: var(--text-normal);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.font-picker-search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.font-picker-search-icon {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+
+.font-picker-search-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.font-picker-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-normal);
+  font: inherit;
+}
+
+.font-picker-search-input::placeholder {
+  color: var(--text-faint);
+}
+
+/* position: relative — отсюда offsetTop вариантов для прокрутки. */
+.font-picker-list {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.font-picker-section {
+  padding: 8px 8px 3px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.font-picker-placeholder {
+  padding: 6px 8px;
+  color: var(--text-muted);
+}
+
+.font-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.font-picker-option[hidden],
+.font-picker-section[hidden] {
+  display: none;
+}
+
+.font-picker-option.is-active {
+  background: var(--background-hover);
+}
+
+.font-picker-check {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 14px;
+  color: var(--accent);
+  visibility: hidden;
+}
+
+.font-picker-option.is-selected .font-picker-check {
+  visibility: visible;
+}
+
+.font-picker-check svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Название — его же шрифтом (подключается, когда вариант виден);
+   у шрифтов из значков вместо этого — образец справа. */
+.font-picker-option-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  /* Явная высота строки: у шрифтов разные метрики, и с line-height: normal
+     строки списка были бы разной высоты. */
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.font-picker-option-sample {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.font-picker-option-hint {
+  flex: none;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.font-picker-custom {
+  padding-left: 28px;
+  color: var(--text-muted);
+  font-style: italic;
+}

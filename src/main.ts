@@ -6,12 +6,16 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { applyAppearance, onThemeChange } from "./appearance";
 import { documentIdFacet, type LinkHandlers, linkHandlersFacet } from "./editor/context";
 import { runEditorKeymapInLatin } from "./editor/layout-keys";
 import { editorExtensions } from "./editor/setup";
 import { setSpellcheckErrorHandler } from "./editor/spellcheck";
-import { type DocumentId, FILES_PENDING_EVENT, api, errorMessage } from "./ipc";
+import { DISK_CHANGE_EVENT, type DiskChange, type DocumentId, FILES_PENDING_EVENT, api, errorMessage } from "./ipc";
+import { NoticeBar } from "./notice";
 import { ReadingView } from "./reading/view";
+import { loadSettings, onSettingsChange } from "./settings";
+import { SettingsPanel } from "./settings-panel";
 import { StatusBar } from "./statusbar";
 import { TabBar } from "./tabbar";
 import welcomeDoc from "./welcome.md?raw";
@@ -64,9 +68,24 @@ const workspace = new Workspace({
   reading,
   statusBar,
   tabBar: new TabBar(requireElement("tabbar")),
+  notice: new NoticeBar(requireElement("notice")),
 });
+const showError = (message: string) => statusBar.showMessage(message, "error");
+const settingsPanel = new SettingsPanel(showError);
 statusBar.onModeChange = (mode) => workspace.setMode(mode);
-setSpellcheckErrorHandler((message) => statusBar.showMessage(message, "error"));
+statusBar.onOpenSettings = () => settingsPanel.open();
+settingsPanel.onClose = () => workspace.focus();
+setSpellcheckErrorHandler(showError);
+
+// Настройки применяются сразу: оформление — через CSS, редактор — через
+// его «ячейки» конфигурации (Vim, орфография).
+onSettingsChange((settings, previous) => {
+  applyAppearance(settings);
+  workspace.applySettings();
+  if (settings.text_font !== previous.text_font) workspace.refreshRendered();
+});
+// Диаграммы нарисованы в цветах темы: сменилась тема — перерисовываем.
+onThemeChange(() => workspace.refreshRendered());
 statusBar.setCursor(view.state);
 view.focus();
 
@@ -87,6 +106,12 @@ function shortcutLetter(event: KeyboardEvent): string {
 /** Действие для сочетания клавиш или null, если это не наше сочетание. */
 function shortcutAction(event: KeyboardEvent): (() => void) | null {
   if (!(event.ctrlKey || event.metaKey) || event.altKey) return null;
+
+  // Ctrl+, — настройки, как в Obsidian. `code` — чтобы работало и в
+  // русской раскладке, где на этой клавише «б».
+  if (!event.shiftKey && (event.key === "," || event.code === "Comma")) {
+    return () => settingsPanel.open();
+  }
 
   switch (event.key) {
     case "Tab":
@@ -156,6 +181,15 @@ void getCurrentWebview().onDragDropEvent((event) => {
 void init();
 
 async function init(): Promise<void> {
+  // Настройки — первыми: от них зависят тема и режим новых вкладок.
+  try {
+    const loaded = await loadSettings();
+    settingsPanel.settingsPath = loaded.path;
+    if (loaded.problem) showError(`${loaded.problem}. Действуют настройки по умолчанию`);
+  } catch (error) {
+    showError(`Настройки не загружены: ${errorMessage(error)}`);
+  }
+
   // Если страница перезагрузилась (при разработке Vite делает это после
   // правок кода), Rust ещё помнит открытые файлы: возвращаем их вкладки.
   try {
@@ -168,6 +202,8 @@ async function init(): Promise<void> {
   // потеряются файлы, пришедшие между этими двумя шагами.
   await listen(FILES_PENDING_EVENT, () => void workspace.openPending());
   await workspace.openPending();
+  // Файл открытого документа изменила другая программа (watcher.rs).
+  await listen<DiskChange>(DISK_CHANGE_EVENT, (event) => void workspace.handleDiskChange(event.payload));
 
   try {
     const info = await api.appInfo();

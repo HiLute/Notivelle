@@ -40,6 +40,55 @@ export type OpenOutcome =
  */
 export const FILES_PENDING_EVENT = "files-pending";
 
+/**
+ * Событие Rust «файл открытого документа изменился на диске» (watcher.rs).
+ * state: "modified" — изменён, "missing" — удалён или перемещён,
+ * "unchanged" — снова совпадает с документом (например, файл вернули).
+ */
+export const DISK_CHANGE_EVENT = "disk-change";
+
+export type DiskState = "unchanged" | "modified" | "missing";
+
+export interface DiskChange {
+  id: DocumentId;
+  state: DiskState;
+}
+
+export type Theme = "system" | "light" | "dark";
+
+/**
+ * Настройки (Settings в config.rs). Имена полей — как ключи в settings.toml,
+ * поэтому snake_case, а не camelCase, как в остальном API.
+ */
+export interface Settings {
+  theme: Theme;
+  default_mode: "live" | "source" | "reading";
+  /** Шрифты: имя семейства или несколько через запятую; "" — по умолчанию. */
+  interface_font: string;
+  text_font: string;
+  monospace_font: string;
+  font_size: number;
+  readable_line_length: boolean;
+  spellcheck: boolean;
+  vim: boolean;
+}
+
+/** Настройки и проблема с файлом настроек, если она была. */
+export interface LoadedSettings {
+  settings: Settings;
+  problem: string | null;
+  /** Где лежит settings.toml; null — каталог настроек недоступен. */
+  path: string | null;
+}
+
+/** Семейство шрифтов, установленное в системе (fonts.rs). */
+export interface FontFamily {
+  name: string;
+  monospace: boolean;
+  /** Вместо букв значки (Dingbats): название им самим не написать. */
+  symbols: boolean;
+}
+
 export type UnsavedChoice = "save" | "discard" | "cancel";
 
 export interface AppInfo {
@@ -98,4 +147,11 @@ export const api = {
   spellSuggest: (word: string) => invoke<string[]>("spell_suggest", { word }),
   /** Добавить слово в личный словарь. */
   spellAddWord: (word: string) => invoke<void>("spell_add_word", { word }),
+  /** Перечитать документ с диска: файл изменила другая программа. */
+  reloadDocument: (id: DocumentId) => invoke<OpenedDocument>("reload_document", { id }),
+  getSettings: () => invoke<LoadedSettings>("get_settings"),
+  /** Возвращает сохранённые настройки, приведённые к допустимым значениям. */
+  saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
+  /** Семейства шрифтов системы по алфавиту. */
+  listFonts: () => invoke<FontFamily[]>("list_fonts"),
 };
