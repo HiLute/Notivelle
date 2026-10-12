@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { documentIdFacet, type LinkHandlers, linkHandlersFacet } from "./editor/context";
 import { runEditorKeymapInLatin } from "./editor/layout-keys";
 import { editorExtensions } from "./editor/setup";
+import { setSpellcheckErrorHandler } from "./editor/spellcheck";
 import { type DocumentId, FILES_PENDING_EVENT, api, errorMessage } from "./ipc";
 import { ReadingView } from "./reading/view";
 import { StatusBar } from "./statusbar";
@@ -65,6 +66,7 @@ const workspace = new Workspace({
   tabBar: new TabBar(requireElement("tabbar")),
 });
 statusBar.onModeChange = (mode) => workspace.setMode(mode);
+setSpellcheckErrorHandler((message) => statusBar.showMessage(message, "error"));
 statusBar.setCursor(view.state);
 view.focus();
 

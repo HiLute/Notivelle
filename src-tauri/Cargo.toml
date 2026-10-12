@@ -30,10 +30,17 @@ comrak = { version = "0.56.0", default-features = false }
 ammonia = "4.2.3"
 percent-encoding = "2.3.2"
 tauri-plugin-opener = "2"
+# Проверка орфографии по словарям Hunspell, на чистом Rust.
+spellbook = "0.3"
 
 [dev-dependencies]
 proptest = "1.12.0"
 serde_json = "1.0"
+
+# Отладочная сборка без оптимизаций разбирала бы русский словарь (почти
+# 150 тысяч основ) несколько секунд; оптимизируем только этот крейт.
+[profile.dev.package.spellbook]
+opt-level = 3
 
 [lints.rust]
 # Небезопасный код запрещён везде, кроме мест, явно помеченных

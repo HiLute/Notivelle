@@ -12,6 +12,7 @@
 //! - `render` — Markdown → безопасный HTML для режима чтения;
 //! - `callouts` — типы и разбор callouts в стиле Obsidian;
 //! - `assets` — протокол `mdimg://` для локальных картинок, пути из ссылок;
+//! - `spellcheck` — проверка орфографии (ru, en) и личный словарь;
 //! - `dialogs` — системные диалоги;
 //! - `commands` — команды для фронтенда;
 //! - `error` — общий тип ошибки.
@@ -26,11 +27,13 @@ mod documents;
 mod error;
 mod pending;
 mod render;
+mod spellcheck;
 
 use std::path::Path;
 
 use documents::Documents;
 use pending::PendingFiles;
+use spellcheck::PersonalDictionary;
 use tauri::{DragDropEvent, Manager, WindowEvent};
 
 /// Собирает и запускает Tauri-приложение.
@@ -86,6 +89,17 @@ pub fn run() -> tauri::Result<()> {
                 )?;
             }
             log::info!("md-editor {} запущен", env!("CARGO_PKG_VERSION"));
+
+            // Словари орфографии разбираются в фоне, пока открывается окно.
+            // Личный словарь — в каталоге конфигурации
+            // (на Linux `~/.config/dev.maksim.md-editor/`).
+            spellcheck::preload();
+            let dictionary_path = app
+                .path()
+                .app_config_dir()
+                .ok()
+                .map(|dir| dir.join("dictionary.txt"));
+            app.manage(PersonalDictionary::load(dictionary_path));
             Ok(())
         })
         // Файлы, перетащенные в окно. Tauri отдаёт пути и во фронтенд, но мы
@@ -108,6 +122,9 @@ pub fn run() -> tauri::Result<()> {
             commands::render_markdown,
             commands::open_external,
             commands::open_link,
+            commands::spell_check,
+            commands::spell_suggest,
+            commands::spell_add_word,
         ])
         .run(tauri::generate_context!())
 }

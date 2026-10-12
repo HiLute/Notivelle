@@ -16,6 +16,7 @@ import {
 import { reliableDragMove } from "./drag-move";
 import { livePreview } from "./live-preview";
 import { markdownSyntaxExtensions } from "./markdown-syntax";
+import { spellcheck } from "./spellcheck";
 import { editorTheme, markdownHighlightStyle } from "./theme";
 
 /**
@@ -57,6 +58,7 @@ export function editorExtensions(): Extension {
     syntaxHighlighting(markdownHighlightStyle),
     editorTheme,
     keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+    spellcheck,
     livePreviewCompartment.of([]),
   ];
 }

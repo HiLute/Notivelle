@@ -21,6 +21,7 @@ use crate::documents::{DocumentId, Documents, FormatInfo, OpenOutcome};
 use crate::error::AppError;
 use crate::pending::PendingFiles;
 use crate::render;
+use crate::spellcheck::{self, PersonalDictionary};
 
 /// Сведения о сборке для строки состояния.
 ///
@@ -199,6 +200,38 @@ pub async fn open_link(
         }
         let path = documents.directory(id)?.join(target);
         Ok(documents.open_all(&[path]))
+    })
+    .await
+}
+
+/// Возвращает слова с ошибками из присланных. Первая проверка ждёт, пока
+/// загрузятся словари (см. `spellcheck::preload`), поэтому — в отдельном потоке.
+#[tauri::command]
+pub async fn spell_check(
+    window: WebviewWindow,
+    words: Vec<String>,
+) -> Result<Vec<String>, AppError> {
+    run_blocking(window, move |window, _| {
+        let personal = window.state::<PersonalDictionary>();
+        Ok(words
+            .into_iter()
+            .filter(|word| spellcheck::is_misspelled(word, &personal))
+            .collect())
+    })
+    .await
+}
+
+/// Варианты исправления слова для контекстного меню.
+#[tauri::command]
+pub async fn spell_suggest(window: WebviewWindow, word: String) -> Result<Vec<String>, AppError> {
+    run_blocking(window, move |_, _| Ok(spellcheck::suggestions(&word))).await
+}
+
+/// «Добавить в словарь»: слово попадает в личный словарь и сохраняется на диск.
+#[tauri::command]
+pub async fn spell_add_word(window: WebviewWindow, word: String) -> Result<(), AppError> {
+    run_blocking(window, move |window, _| {
+        window.state::<PersonalDictionary>().add(&word)
     })
     .await
 }

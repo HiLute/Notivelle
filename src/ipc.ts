@@ -92,4 +92,10 @@ export const api = {
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   /** Открыть во вкладке Markdown-файл по ссылке относительно документа. */
   openLink: (id: DocumentId, href: string) => invoke<OpenOutcome[]>("open_link", { id, href }),
+  /** Слова с ошибками из присланных (spellcheck.rs). */
+  spellCheck: (words: string[]) => invoke<string[]>("spell_check", { words }),
+  /** Варианты исправления слова. */
+  spellSuggest: (word: string) => invoke<string[]>("spell_suggest", { word }),
+  /** Добавить слово в личный словарь. */
+  spellAddWord: (word: string) => invoke<void>("spell_add_word", { word }),
 };
