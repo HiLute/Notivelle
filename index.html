@@ -9,8 +9,10 @@
     <div id="app">
       <main id="editor" class="editor-host"></main>
       <footer id="statusbar" class="statusbar">
-        <span id="status-app"></span>
-        <span id="status-cursor"></span>
+        <span data-part="file"></span>
+        <span data-part="message" role="status"></span>
+        <span data-part="format"></span>
+        <span data-part="cursor"></span>
       </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>

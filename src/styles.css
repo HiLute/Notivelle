@@ -98,6 +98,9 @@ body {
 #app {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
+  /* Без явной колонки она растягивается до min-content содержимого
+     (например, длинного пути в строке состояния) шире окна. */
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
 }
 
@@ -108,13 +111,33 @@ body {
 
 .statusbar {
   display: flex;
-  justify-content: space-between;
-  gap: 1rem;
+  align-items: center;
+  gap: 1.25rem;
   padding: 0.25rem 0.75rem;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   color: var(--text-muted);
   background: var(--background-secondary);
   border-top: 1px solid var(--border);
   user-select: none;
+}
+
+/* Путь и сообщение делят свободное место; длинный путь обрезается слева
+   направо многоточием, формат и курсор всегда видны целиком. */
+.statusbar [data-part="file"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusbar [data-part="message"] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusbar [data-part="message"][data-kind="error"] {
+  color: var(--text-error);
 }

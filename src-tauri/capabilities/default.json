@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Права главного окна. Доступа к файловой системе у фронтенда нет: весь ввод-вывод идёт через собственные команды на Rust. Права добавляются по мере необходимости.",
   "windows": ["main"],
-  "permissions": ["core:event:default", "core:window:default"]
+  "permissions": [
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-set-title",
+    "core:window:allow-destroy"
+  ]
 }
