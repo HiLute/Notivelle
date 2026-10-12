@@ -4,8 +4,8 @@ export type ViewMode = "reading" | "live" | "source";
 /** Режимы редактирования: в последний из них Ctrl+E возвращается из чтения. */
 export type EditingMode = Exclude<ViewMode, "reading">;
 
-/** Live Preview появится на этапе M4, до тех пор переключатель его не включает. */
-export const LIVE_PREVIEW_READY = false;
+/** В каком режиме открываются файлы (как в Obsidian). Станет настройкой на M6. */
+export const DEFAULT_EDITING_MODE: EditingMode = "live";
 
 export const MODE_LABELS: Record<ViewMode, string> = {
   reading: "Чтение",

@@ -304,12 +304,3 @@ body {
   color: var(--background-primary);
 }
 
-.mode-button[aria-disabled="true"] {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.mode-button[aria-disabled="true"]:hover {
-  background: none;
-  color: var(--text-muted);
-}

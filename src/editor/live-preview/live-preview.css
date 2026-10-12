@@ -1,0 +1,294 @@
+/* Live Preview: оформление виджетов и строк поверх редактора CodeMirror. */
+
+.cm-lp-bullet {
+  display: inline-block;
+  width: 0.8em;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* Вид чекбокса — общий с режимом чтения (.task-list-item-checkbox в markdown.css). */
+.cm-lp-checkbox {
+  margin: 0 0.45em 0 0;
+}
+
+.cm-lp-rule {
+  display: inline-block;
+  width: 100%;
+  border-top: 1px solid var(--border-strong);
+  vertical-align: middle;
+}
+
+.cm-lp-link {
+  color: var(--link);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--link) 45%, transparent);
+  text-underline-offset: 2px;
+}
+
+.cm-lp-image {
+  display: block;
+  max-width: 100%;
+  margin: 0.4em 0;
+  border-radius: 4px;
+}
+
+.cm-lp-image-broken {
+  display: inline-block;
+  min-width: 1em;
+  min-height: 1em;
+  outline: 1px dashed var(--text-error);
+}
+
+.cm-lp-math {
+  font-family: var(--font-text);
+}
+
+.cm-line.cm-lp-quote {
+  border-left: 3px solid var(--accent);
+  padding-left: 1em;
+  color: var(--text-muted);
+}
+
+/* YAML-шапка — приглушённым моноширинным блоком (в режиме чтения её не видно). */
+.cm-line.cm-lp-frontmatter {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+.cm-line.cm-lp-codeblock {
+  padding: 0 1em;
+  background: var(--code-background);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.cm-line.cm-lp-codeblock-begin {
+  border-radius: 6px 6px 0 0;
+}
+
+.cm-line.cm-lp-codeblock-end {
+  border-radius: 0 0 6px 6px;
+}
+
+/* Вместо строки ```язык: название языка и кнопка «Копировать» справа. */
+.cm-lp-code-header {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5em;
+  width: 100%;
+  /* Ровно в строку кода (её высота — 1.6 × 0.9em, здесь шрифт 0.8 от неё):
+     когда курсор входит в блок и шапку сменяет ```язык, ничего не прыгает. */
+  height: 2em;
+  color: var(--text-faint);
+  font-family: var(--font-ui);
+  font-size: 0.8em;
+  vertical-align: top;
+  user-select: none;
+}
+
+.cm-lp-code-copy {
+  display: grid;
+  place-items: center;
+  width: 1.8em;
+  height: 1.8em;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cm-lp-code-copy:hover {
+  background: var(--background-hover);
+  color: var(--text-normal);
+}
+
+.cm-lp-code-copy svg {
+  width: 1.15em;
+  height: 1.15em;
+}
+
+/* Блоки, которые рендерит Rust: те же стили, что в режиме чтения
+   (markdown.css), плюс отступы внутри редактора. */
+.cm-lp-block {
+  padding: 0.25em 0;
+  cursor: text;
+  /* Редактор задаёт тексту pre-wrap, а в HTML от Rust между тегами стоят
+     переводы строк — без этого они превратились бы в пустые строки. */
+  white-space: normal;
+}
+
+/* В блоках кода пробелы и переводы строк значимы. */
+.cm-lp-block pre {
+  white-space: pre;
+}
+
+.cm-lp-block > :last-child {
+  margin-bottom: 0;
+}
+
+.cm-lp-block-loading {
+  min-height: 2em;
+  border-radius: 6px;
+  background: var(--code-background);
+}
+
+/* ---------- Таблицы (table/widget.ts) ---------- */
+
+/* Справа и снизу — место под кнопки «+». */
+.cm-lp-table-widget {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.25em 16px 16px 0;
+  white-space: normal;
+  cursor: default;
+}
+
+.cm-lp-table-scroll {
+  overflow-x: auto;
+}
+
+/* Прокручивается обёртка, а не сама таблица, как в режиме чтения. */
+.cm-lp-table-scroll table {
+  display: table;
+  margin: 0;
+}
+
+.cm-lp-table-scroll :is(th, td) {
+  min-width: 3em;
+  cursor: text;
+}
+
+.cm-lp-table-scroll :is(th, td).is-editing {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.cm-lp-table-widget.is-selected table {
+  background: var(--selection);
+}
+
+/* Редактор ячейки — CodeMirror внутри CodeMirror. Правила основного
+   редактора (отступы, ширина строки) достаются и ему, поэтому здесь они
+   перебиваются более точными селекторами. */
+.cm-lp-table-widget .cm-lp-table-scroll .cm-editor {
+  height: auto;
+  background: transparent;
+  font-size: inherit;
+}
+
+.cm-lp-table-widget .cm-lp-table-scroll .cm-editor.cm-focused {
+  outline: none;
+}
+
+.cm-lp-table-widget .cm-lp-table-scroll .cm-scroller {
+  padding: 0;
+  overflow: visible;
+  font-family: inherit;
+  line-height: inherit;
+}
+
+.cm-lp-table-widget .cm-lp-table-scroll .cm-content {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cm-lp-table-widget .cm-lp-table-scroll .cm-line {
+  padding: 0;
+}
+
+/* Кнопки «+» и ручки строк и столбцов видны при наведении на таблицу. */
+.cm-lp-table-control {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.cm-lp-table-control:hover {
+  background: var(--background-hover);
+  color: var(--text-normal);
+}
+
+.cm-lp-table-control svg {
+  width: 12px;
+  height: 12px;
+}
+
+.cm-lp-table-widget:hover .cm-lp-table-add,
+.cm-lp-table-widget.has-handles .cm-lp-table-handle {
+  opacity: 1;
+}
+
+.cm-lp-table-add-row {
+  right: 16px;
+  bottom: 2px;
+  left: 0;
+  height: 12px;
+}
+
+.cm-lp-table-add-column {
+  top: 0.25em;
+  right: 2px;
+  bottom: 16px;
+  width: 12px;
+}
+
+.cm-lp-table-handle {
+  cursor: grab;
+  touch-action: none;
+}
+
+.cm-lp-table-row-handle {
+  left: -18px;
+  width: 14px;
+  height: 22px;
+  transform: translateY(-50%);
+}
+
+.cm-lp-table-column-handle {
+  width: 22px;
+  height: 14px;
+  transform: translate(-50%, -100%);
+}
+
+.cm-lp-table-widget.is-dragging,
+.cm-lp-table-widget.is-dragging .cm-lp-table-handle {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* Куда встанет перетаскиваемая строка или столбец. */
+.cm-lp-table-drop {
+  position: absolute;
+  display: none;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.cm-lp-table-drop.is-visible {
+  display: block;
+}
+
+.cm-lp-table-drop.is-row {
+  height: 2px;
+  transform: translateY(-1px);
+}
+
+.cm-lp-table-drop.is-column {
+  width: 2px;
+  transform: translateX(-1px);
+}

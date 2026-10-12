@@ -4,7 +4,7 @@ import codeXml from "lucide-static/icons/code-xml.svg?raw";
 import penLine from "lucide-static/icons/pen-line.svg?raw";
 
 import type { FormatInfo } from "./ipc";
-import { LIVE_PREVIEW_READY, MODE_LABELS, type ViewMode } from "./modes";
+import { MODE_LABELS, type ViewMode } from "./modes";
 
 type MessageKind = "info" | "error";
 
@@ -19,8 +19,8 @@ const MODE_ICONS: Record<ViewMode, string> = {
 
 const MODE_HINTS: Record<ViewMode, string> = {
   reading: "Чтение (Ctrl+E)",
-  live: LIVE_PREVIEW_READY ? "Live Preview" : "Live Preview — появится на этапе M4",
-  source: "Исходник",
+  live: "Live Preview (Ctrl+Shift+E)",
+  source: "Исходник (Ctrl+Shift+E)",
 };
 
 /**
@@ -111,10 +111,6 @@ export class StatusBar {
       button.innerHTML = MODE_ICONS[mode];
       button.title = MODE_HINTS[mode];
       button.setAttribute("aria-label", MODE_LABELS[mode]);
-      // Неготовый режим не выключаем атрибутом disabled: у выключенной
-      // кнопки не показывается подсказка и не работает клик, а по клику мы
-      // объясняем, когда режим появится.
-      if (mode === "live" && !LIVE_PREVIEW_READY) button.setAttribute("aria-disabled", "true");
       button.addEventListener("click", () => this.onModeChange(mode));
       this.#modeButtons.set(mode, button);
       container.append(button);

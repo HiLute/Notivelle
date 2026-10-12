@@ -75,7 +75,8 @@
   text-decoration-color: var(--link);
 }
 
-.markdown-rendered kbd {
+/* Те же теги в Live Preview: там их оборачивает inline.ts. */
+:is(.markdown-rendered, .cm-content) kbd {
   padding: 0.05em 0.4em;
   border: 1px solid var(--border-strong);
   border-bottom-width: 2px;
@@ -85,7 +86,7 @@
   font-size: 0.85em;
 }
 
-.markdown-rendered mark {
+:is(.markdown-rendered, .cm-content) mark {
   padding: 0 0.1em;
   border-radius: 2px;
   background: var(--mark-background);
@@ -134,6 +135,48 @@
   line-height: 1.5;
 }
 
+.markdown-rendered .code-block {
+  position: relative;
+  margin: 0 0 1em;
+}
+
+.markdown-rendered .code-block > pre {
+  margin: 0;
+}
+
+.code-block-copy {
+  position: absolute;
+  top: 0.4em;
+  right: 0.4em;
+  display: grid;
+  place-items: center;
+  width: 1.8em;
+  height: 1.8em;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--code-background);
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.code-block:hover .code-block-copy,
+.code-block-copy:focus-visible {
+  opacity: 1;
+}
+
+.code-block-copy:hover {
+  background: var(--background-hover);
+  color: var(--text-normal);
+}
+
+.code-block-copy svg {
+  width: 1em;
+  height: 1em;
+}
+
 .markdown-rendered pre code {
   padding: 0;
   background: none;
@@ -165,8 +208,60 @@
 
 .markdown-rendered .task-list-item-checkbox {
   margin: 0 0.45em 0 -1.4em;
-  vertical-align: middle;
-  accent-color: var(--accent);
+}
+
+/* Чекбокс задачи как в Obsidian: скруглённый квадрат с тонкой рамкой, у
+   отмеченного — заливка акцентным цветом и галочка. Стиль общий для режима
+   чтения и Live Preview (там у виджета тот же класс). */
+.task-list-item-checkbox {
+  position: relative;
+  flex: none;
+  width: 0.95em;
+  height: 0.95em;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--text-faint);
+  border-radius: 4px;
+  background: transparent;
+  vertical-align: -0.12em;
+  cursor: pointer;
+  appearance: none;
+}
+
+.task-list-item-checkbox:hover {
+  border-color: var(--text-muted);
+}
+
+.task-list-item-checkbox:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+/* Галочка: SVG как маска, цвет — фон страницы поверх акцентной заливки. */
+.task-list-item-checkbox:checked::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--background-primary);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+    center / 75% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+    center / 75% no-repeat;
+}
+
+.task-list-item-checkbox:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Выполненная задача зачёркнута и приглушена; её вложенный список — нет
+   (поэтому текст обёрнут отдельно, см. reading/tasks.ts). В «рыхлом» списке
+   текст пункта лежит в абзацах. */
+.task-list-item-checkbox:checked + .task-list-item-text,
+.task-list-item:has(> .task-list-item-checkbox:checked) > p,
+.cm-lp-task-done {
+  color: var(--text-muted);
+  text-decoration: line-through;
 }
 
 .markdown-rendered .footnotes {

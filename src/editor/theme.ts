@@ -2,6 +2,8 @@ import { HighlightStyle } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 
+import { highlightTag, mathTag } from "./markdown-syntax";
+
 /**
  * Оформление редактора.
  *
@@ -91,4 +93,8 @@ export const markdownHighlightStyle = HighlightStyle.define([
   { tag: [t.tagName, t.macroName], color: "var(--code-tag)" },
   { tag: [t.operator, t.escape], color: "var(--code-operator)" },
   { tag: t.invalid, color: "var(--text-error)" },
+
+  // Наш синтаксис (markdown-syntax.ts): ==выделение== и формулы.
+  { tag: highlightTag, backgroundColor: "var(--mark-background)", borderRadius: "2px" },
+  { tag: mathTag, color: "var(--code-number)" },
 ]);

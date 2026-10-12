@@ -1,9 +1,10 @@
 import "./markdown.css";
 
-import { highlightCodeBlocks } from "./code";
+import { addCopyButtons, highlightCodeBlocks } from "./code";
 import { decorateCallouts } from "./icons";
 import { renderMath } from "./math";
 import { renderMermaid } from "./mermaid";
+import { prepareTaskCheckboxes, taskSourceLine } from "./tasks";
 
 export interface ReadingLinks {
   /** Внешняя ссылка (http, https, mailto) — открыть в браузере. */
@@ -11,6 +12,12 @@ export interface ReadingLinks {
   /** Ссылка на файл относительно документа — открыть во вкладке. */
   openLocal(href: string): void;
 }
+
+/**
+ * Отметить задачу на строке исходника `line` (с 1). Возвращает новое
+ * состояние чекбокса или null, если задачу отметить не удалось.
+ */
+export type ToggleTask = (line: number) => boolean | null;
 
 /**
  * Режим чтения: показывает HTML, который отрендерил и очистил Rust
@@ -23,7 +30,7 @@ export class ReadingView {
   /** Номер последнего показа: устаревшая дорисовка не трогает новый текст. */
   #generation = 0;
 
-  constructor(host: HTMLElement, links: ReadingLinks) {
+  constructor(host: HTMLElement, links: ReadingLinks, toggleTask: ToggleTask) {
     this.#host = host;
     this.#content = document.createElement("div");
     this.#content.className = "markdown-rendered";
@@ -43,6 +50,17 @@ export class ReadingView {
     };
     host.addEventListener("click", onLink);
     host.addEventListener("auxclick", onLink);
+
+    // Чекбоксы задач меняют исходный текст, как в Obsidian. Браузер уже
+    // переключил чекбокс; если правка не удалась, отмена события вернёт его.
+    host.addEventListener("click", (event) => {
+      const box = event.target;
+      if (!(box instanceof HTMLInputElement) || !box.classList.contains("task-list-item-checkbox")) return;
+      const line = taskSourceLine(box);
+      const checked = line === null ? null : toggleTask(line);
+      if (checked === null) event.preventDefault();
+      else box.checked = checked;
+    });
   }
 
   get visible(): boolean {
@@ -55,6 +73,8 @@ export class ReadingView {
     this.#host.hidden = false;
     this.#content.innerHTML = html;
     decorateCallouts(this.#content);
+    prepareTaskCheckboxes(this.#content);
+    addCopyButtons(this.#content);
     await Promise.all([renderMath(this.#content), highlightCodeBlocks(this.#content)]);
     if (generation !== this.#generation) return;
     await renderMermaid(this.#content);

@@ -1,0 +1,71 @@
+/* Всплывающее меню (ui/menu.ts): контекстное меню таблиц, позже — орфографии. */
+
+.menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 12rem;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--background-secondary);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.25);
+  color: var(--text-normal);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  user-select: none;
+}
+
+.menu-section {
+  padding: 6px 8px 2px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  background: var(--background-hover);
+  outline: none;
+}
+
+.menu-item:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.menu-item-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.menu-item-icon svg {
+  width: 15px;
+  height: 15px;
+}

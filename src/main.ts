@@ -6,9 +6,10 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { documentIdFacet, type LinkHandlers, linkHandlersFacet } from "./editor/context";
 import { runEditorKeymapInLatin } from "./editor/layout-keys";
 import { editorExtensions } from "./editor/setup";
-import { FILES_PENDING_EVENT, api, errorMessage } from "./ipc";
+import { type DocumentId, FILES_PENDING_EVENT, api, errorMessage } from "./ipc";
 import { ReadingView } from "./reading/view";
 import { StatusBar } from "./statusbar";
 import { TabBar } from "./tabbar";
@@ -23,12 +24,24 @@ function requireElement(id: string): HTMLElement {
 
 const statusBar = new StatusBar(requireElement("statusbar"));
 
-/** Состояние редактора для нового документа: свежая история отмены. */
-function createState(text: string): EditorState {
+/** Ссылки из режима чтения и Live Preview открываются одинаково. */
+const links: LinkHandlers = {
+  // `workspace` объявлена ниже; ссылки открываются только после запуска.
+  openExternal: (url) => void workspace.openExternal(url),
+  openLocal: (href) => void workspace.openLink(href),
+};
+
+/**
+ * Состояние редактора для нового документа: свежая история отмены.
+ * `id` — документ, к которому относятся картинки и блоки Live Preview.
+ */
+function createState(text: string, id: DocumentId | null): EditorState {
   return EditorState.create({
     doc: text,
     extensions: [
       editorExtensions(),
+      documentIdFacet.of(id),
+      linkHandlersFacet.of(links),
       EditorView.updateListener.of((update) => {
         // `workspace` объявлена ниже, но слушатель срабатывает только на
         // правки, а они возможны лишь после того, как всё создано.
@@ -40,11 +53,9 @@ function createState(text: string): EditorState {
 }
 
 const editorHost = requireElement("editor");
-const view = new EditorView({ parent: editorHost, state: createState(welcomeDoc) });
-const reading = new ReadingView(requireElement("reading"), {
-  openExternal: (url) => void workspace.openExternal(url),
-  openLocal: (href) => void workspace.openLink(href),
-});
+const view = new EditorView({ parent: editorHost, state: createState(welcomeDoc, null) });
+// `workspace` объявлена ниже; чекбоксы нажимают только после запуска.
+const reading = new ReadingView(requireElement("reading"), links, (line) => workspace.toggleTask(line));
 const workspace = new Workspace({
   view,
   editorHost,
@@ -83,7 +94,9 @@ function shortcutAction(event: KeyboardEvent): (() => void) | null {
     case "PageUp":
       return event.shiftKey ? null : () => workspace.activateNext(-1);
   }
-  if (event.shiftKey) return null;
+  if (event.shiftKey) {
+    return shortcutLetter(event) === "e" ? () => workspace.toggleEditingMode() : null;
+  }
 
   switch (shortcutLetter(event)) {
     case "o":
@@ -99,6 +112,15 @@ function shortcutAction(event: KeyboardEvent): (() => void) | null {
   }
 }
 
+/**
+ * Редактор с фокусом: основной или редактор ячейки таблицы внутри него
+ * (см. live-preview/table).
+ */
+function focusedEditor(): EditorView {
+  const root = document.activeElement?.closest<HTMLElement>(".cm-editor");
+  return (root && EditorView.findFromDOM(root)) ?? view;
+}
+
 // Горячие клавиши приложения перехватываем на фазе погружения (capture),
 // раньше редактора, и дальше не пускаем: иначе, например, Ctrl+Tab ещё и
 // вставил бы табуляцию. Там же чиним сочетания редактора в нелатинской
@@ -108,7 +130,7 @@ window.addEventListener(
   (event) => {
     const action = shortcutAction(event);
     if (action) action();
-    else if (!runEditorKeymapInLatin(view, event)) return;
+    else if (!runEditorKeymapInLatin(focusedEditor(), event)) return;
     event.preventDefault();
     event.stopPropagation();
   },

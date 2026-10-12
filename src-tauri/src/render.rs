@@ -274,6 +274,25 @@ mod tests {
         assert!(html.contains("data-sourcepos"), "{html}");
     }
 
+    /// Режим чтения отмечает задачи по строке из `data-sourcepos` у `<li>`:
+    /// номер должен указывать на строку исходника, считая YAML-шапку.
+    #[test]
+    fn task_items_point_to_their_source_lines() {
+        let html = render("---\ntags: [a]\n---\n- [ ] one\n\n> [!note]\n> - [x] two\n");
+        assert!(
+            html.contains(r#"<li class="task-list-item" data-sourcepos="4:"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<li class="task-list-item" data-sourcepos="7:"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"class="task-list-item-checkbox""#),
+            "{html}"
+        );
+    }
+
     #[test]
     fn hides_front_matter() {
         let html = render("---\ntags: [a]\n---\n# Body\n");

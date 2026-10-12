@@ -1,7 +1,10 @@
 import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { highlightCode } from "@lezer/highlight";
+import checkIcon from "lucide-static/icons/check.svg?raw";
+import copyIcon from "lucide-static/icons/copy.svg?raw";
 
+import { copyText } from "../clipboard";
 import { markdownHighlightStyle } from "../editor/theme";
 
 /**
@@ -45,4 +48,33 @@ async function highlightBlock(code: HTMLElement): Promise<void> {
     () => fragment.append("\n"),
   );
   code.replaceChildren(fragment);
+}
+
+/**
+ * Кнопка «Копировать» в углу каждого блока кода, как в Obsidian. Видна при
+ * наведении на блок. Блок оборачивается в `.code-block`: кнопка внутри
+ * самого `<pre>` уезжала бы при горизонтальной прокрутке длинных строк.
+ */
+export function addCopyButtons(root: HTMLElement): void {
+  for (const code of root.querySelectorAll<HTMLElement>("pre > code")) {
+    const pre = code.parentElement;
+    if (!pre || code.classList.contains("language-mermaid") || code.classList.contains("language-math")) continue;
+    const block = document.createElement("div");
+    block.className = "code-block";
+    pre.replaceWith(block);
+    block.append(pre);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "code-block-copy";
+    button.title = "Копировать код";
+    button.innerHTML = copyIcon;
+    button.addEventListener("click", () => {
+      void copyText(code.textContent ?? "").then(() => {
+        button.innerHTML = checkIcon;
+        setTimeout(() => (button.innerHTML = copyIcon), 1200);
+      });
+    });
+    block.append(button);
+  }
 }

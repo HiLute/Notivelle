@@ -3,8 +3,10 @@ import type { EditorView } from "@codemirror/view";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { scrollToLine, topVisibleLine } from "./editor/scroll";
+import { setLivePreview } from "./editor/setup";
+import { toggleTaskOnLine } from "./editor/tasks";
 import { api, errorMessage, type DocumentId, type FormatInfo, type OpenOutcome, type OpenedDocument } from "./ipc";
-import { LIVE_PREVIEW_READY, type EditingMode, type ViewMode } from "./modes";
+import { DEFAULT_EDITING_MODE, type EditingMode, type ViewMode } from "./modes";
 import type { ReadingView } from "./reading/view";
 import type { StatusBar } from "./statusbar";
 import type { TabBar } from "./tabbar";
@@ -53,7 +55,7 @@ export interface WorkspaceParts {
   view: EditorView;
   /** Элемент, в котором живёт редактор: его прячем в режиме чтения. */
   editorHost: HTMLElement;
-  createState: (text: string) => EditorState;
+  createState: (text: string, id: DocumentId | null) => EditorState;
   reading: ReadingView;
   statusBar: StatusBar;
   tabBar: TabBar;
@@ -69,7 +71,7 @@ export interface WorkspaceParts {
 export class Workspace {
   readonly #view: EditorView;
   readonly #editorHost: HTMLElement;
-  readonly #createState: (text: string) => EditorState;
+  readonly #createState: (text: string, id: DocumentId | null) => EditorState;
   readonly #reading: ReadingView;
   readonly #statusBar: StatusBar;
   readonly #tabBar: TabBar;
@@ -78,8 +80,8 @@ export class Workspace {
   /** Приветственная страница; её состояние хранится, пока открыта вкладка. */
   #welcome: EditorState;
   readonly #welcomePage: Page = {
-    mode: "source",
-    editingMode: "source",
+    mode: DEFAULT_EDITING_MODE,
+    editingMode: DEFAULT_EDITING_MODE,
     rendered: null,
     readingLine: null,
   };
@@ -192,10 +194,6 @@ export class Workspace {
       this.#focusContent();
       return;
     }
-    if (mode === "live" && !LIVE_PREVIEW_READY) {
-      this.#statusBar.showMessage("Режим Live Preview появится на этапе M4");
-      return;
-    }
 
     if (mode === "reading") {
       page.readingLine = topVisibleLine(this.#view);
@@ -215,6 +213,21 @@ export class Workspace {
   toggleReading(): void {
     const page = this.#page();
     this.setMode(page.mode === "reading" ? page.editingMode : "reading");
+  }
+
+  /** Ctrl+Shift+E: исходник ⇄ Live Preview. Из чтения — в другой режим правки. */
+  toggleEditingMode(): void {
+    const page = this.#page();
+    const current = page.mode === "reading" ? page.editingMode : page.mode;
+    this.setMode(current === "live" ? "source" : "live");
+  }
+
+  /**
+   * Клик по чекбоксу в режиме чтения: задача отмечается прямо в тексте
+   * текущей страницы, и правку можно отменить в редакторе.
+   */
+  toggleTask(line: number): boolean | null {
+    return toggleTaskOnLine(this.#view, line);
   }
 
   /** Ctrl+O: диалог открытия, можно выбрать несколько файлов. */
@@ -320,7 +333,7 @@ export class Workspace {
   }
 
   #createTab(document: OpenedDocument): Tab {
-    const state = this.#createState(document.text);
+    const state = this.#createState(document.text, document.id);
     return {
       id: document.id,
       path: document.path,
@@ -333,8 +346,8 @@ export class Workspace {
       state,
       scroll: null,
       savedDoc: state.doc,
-      mode: "source",
-      editingMode: "source",
+      mode: DEFAULT_EDITING_MODE,
+      editingMode: DEFAULT_EDITING_MODE,
       rendered: null,
       readingLine: null,
     };
@@ -386,7 +399,7 @@ export class Workspace {
         html = await api.renderMarkdown(this.#active?.id ?? null, doc.toString());
       } catch (error) {
         this.#statusBar.showMessage(errorMessage(error), "error");
-        page.mode = "source";
+        page.mode = page.editingMode;
         this.#showEditor();
         this.#refresh();
         return;
@@ -410,7 +423,9 @@ export class Workspace {
     }
   }
 
+  /** Показывает редактор в режиме текущей страницы: исходник или Live Preview. */
   #showEditor(): void {
+    setLivePreview(this.#view, this.#page().mode === "live");
     this.#reading.hide();
     this.#editorHost.hidden = false;
     this.#view.requestMeasure();

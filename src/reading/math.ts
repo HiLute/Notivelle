@@ -33,3 +33,9 @@ export async function renderMath(root: HTMLElement): Promise<void> {
     });
   }
 }
+
+/** Рисует одну формулу в элемент (для виджетов Live Preview). */
+export async function renderTex(element: HTMLElement, tex: string, displayMode: boolean): Promise<void> {
+  const katex = await loadKatex();
+  katex.render(tex, element, { displayMode, throwOnError: false });
+}
