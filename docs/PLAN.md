@@ -112,8 +112,10 @@ Safari 17.5+). Шрифты, как в Obsidian, — три отдельных: 
 Лицензия — MIT (`LICENSE`). GitHub Actions: `ci.yml` (проверки на Linux, Windows,
 macOS) и `release.yml` (по тегу `v*`: установщики Windows NSIS/MSI, универсальный DMG
 для macOS, `.pkg.tar.zst` для Arch из `makepkg` в контейнере). Настройки бандлов для
-Linux — в `tauri.linux.conf.json`; на macOS файлы из Finder приходят событием
-`RunEvent::Opened`, а не аргументами.
+Linux — в `tauri.linux.conf.json`, для Windows — в `tauri.windows.conf.json` (MSI на
+русском, кодовая страница 1251: иначе WiX не записывает кириллическое описание типа
+файла); на macOS файлы из Finder приходят событием `RunEvent::Opened`, а не
+аргументами.
 
 ## Что сознательно не входит
 

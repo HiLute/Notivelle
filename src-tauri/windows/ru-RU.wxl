@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Русская локализация установщика MSI (подключается в tauri.windows.conf.json).
+
+  Codepage="1251" обязателен: WiX записывает строки в базу MSI в однобайтовой
+  кодировке Windows, и без кириллической кодовой страницы light.exe падает на
+  описании типа файла «Markdown-документ» из tauri.conf.json.
+
+  Окна установщика WiX переводит сам. Здесь — только строки шаблона Tauri;
+  английские исходники: tauri-bundler, msi/default-locale-strings.xml.
+-->
+<WixLocalization Culture="ru-ru" Codepage="1251" xmlns="http://schemas.microsoft.com/wix/2006/localization">
+  <String Id="LaunchApp">Запустить Notivelle</String>
+  <String Id="DowngradeErrorMessage">Уже установлена более новая версия Notivelle.</String>
+  <String Id="PathEnvVarFeature">Добавить папку Notivelle в системную переменную PATH, чтобы программу можно было запускать из командной строки в любой папке.</String>
+  <String Id="InstallAppFeature">Устанавливает Notivelle.</String>
+</WixLocalization>

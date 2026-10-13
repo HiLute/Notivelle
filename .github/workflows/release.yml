@@ -7,6 +7,10 @@
 # Ручной запуск (Actions → Release → Run workflow) собирает всё то же самое,
 # но релиз не создаёт: файлы остаются в артефактах запуска. Так конвейер
 # можно проверить до первого тега.
+#
+# Если сборка по тегу упала, релиз остаётся черновиком: после исправления
+# тег переставляют (git tag -f, git push --force origin v0.1.0), и запуск
+# дополняет тот же черновик.
 name: Release
 
 on:
@@ -42,18 +46,27 @@ jobs:
             exit 1
           fi
 
+      # Если релиз для тега уже есть (сборка упала, ошибку исправили и тег
+      # переставили на новый коммит), берём его: tauri-action и
+      # `gh release upload --clobber` заменят файлы с теми же именами.
       - name: Создать черновик
         id: create
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
-            --title "Notivelle ${GITHUB_REF_NAME#v}" \
-            --notes-file .github/release-notes.md
           # Черновик не найти по тегу (у него ещё нет страницы), поэтому id
           # ищем в списке релизов.
-          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
-            --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n 1)
+          find_release() {
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n 1
+          }
+          id=$(find_release)
+          if [ -z "$id" ]; then
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "Notivelle ${GITHUB_REF_NAME#v}" \
+              --notes-file .github/release-notes.md
+            id=$(find_release)
+          fi
           echo "release-id=$id" >> "$GITHUB_OUTPUT"
 
   desktop:
