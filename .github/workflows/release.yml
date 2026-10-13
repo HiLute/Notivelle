@@ -1,16 +1,20 @@
-# Релиз: тег vX.Y.Z → GitHub Release с установщиками для Windows (NSIS и
-# MSI), macOS (универсальный DMG: Apple Silicon и Intel) и пакетом для Arch
-# Linux (.pkg.tar.zst). Версия в src-tauri/Cargo.toml должна совпадать с
-# тегом; что ещё поменять при новой версии — packaging/README.md.
+# Релиз: тег vX.Y.Z → черновик GitHub Release с установщиками для Windows
+# (NSIS и MSI), macOS (универсальный DMG: Apple Silicon и Intel) и пакетом
+# для Arch Linux (.pkg.tar.zst). Версия в src-tauri/Cargo.toml должна
+# совпадать с тегом; что ещё поменять при новой версии — packaging/README.md.
 #
 #   git tag v0.2.0 && git push origin v0.2.0
 #
-# Ручной запуск (Actions → Release → Run workflow) собирает всё то же самое,
-# но релиз не создаёт: файлы остаются в артефактах запуска. Так конвейер
-# можно проверить до первого тега.
+# Сам релиз не публикуется: черновик проверяют, правят текст и выпускают
+# руками (Releases → черновик → Edit → Publish release). Ссылка на черновик
+# — в сводке запуска.
 #
-# Если сборка по тегу упала, релиз остаётся черновиком: после исправления
-# тег переставляют (git tag -f, git push --force origin vX.Y.Z), и запуск
+# Ручной запуск (Actions → Release → Run workflow) собирает всё то же самое,
+# но черновик не создаёт: файлы остаются в артефактах запуска. Так конвейер
+# можно проверить до тега.
+#
+# Если сборка по тегу упала, черновик остаётся: после исправления тег
+# переставляют (git tag -f, git push --force origin vX.Y.Z), и запуск
 # дополняет тот же черновик.
 name: Release
 
@@ -47,26 +51,40 @@ jobs:
             exit 1
           fi
 
-      # Если релиз для тега уже есть (сборка упала, ошибку исправили и тег
+      # Если черновик для тега уже есть (сборка упала, ошибку исправили и тег
       # переставили на новый коммит), берём его: tauri-action и
       # `gh release upload --clobber` заменят файлы с теми же именами.
+      # Опубликованный релиз не трогаем — для него нужна новая версия.
       - name: Создать черновик
         id: create
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Черновик не найти по тегу (у него ещё нет страницы), поэтому id
-          # ищем в списке релизов.
-          find_release() {
-            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-              --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n 1
-          }
-          id=$(find_release)
+          # Черновик не найти по тегу (у него ещё нет страницы), поэтому
+          # ищем его в списке релизов.
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | [.id, .draft] | @tsv" | head -n 1)
+          if [ -n "$existing" ]; then
+            read -r id draft <<< "$existing"
+            if [ "$draft" != "true" ]; then
+              echo "::error::Релиз $GITHUB_REF_NAME уже опубликован. Удалите его на GitHub или выпустите новую версию."
+              exit 1
+            fi
+          else
+            # id — из ответа на создание. Искать новый черновик в списке
+            # нельзя: список обновляется не сразу, и черновика в нём может
+            # ещё не быть. Так случилось с v0.2.0: id оказался пустым, и
+            # установщики собрались, но в релиз не попали.
+            id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$GITHUB_REF_NAME" \
+              -f name="Notivelle ${GITHUB_REF_NAME#v}" \
+              -F draft=true \
+              -F body=@.github/release-notes.md \
+              --jq .id)
+          fi
           if [ -z "$id" ]; then
-            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
-              --title "Notivelle ${GITHUB_REF_NAME#v}" \
-              --notes-file .github/release-notes.md
-            id=$(find_release)
+            echo "::error::Не удалось узнать id черновика релиза"
+            exit 1
           fi
           echo "release-id=$id" >> "$GITHUB_OUTPUT"
 
@@ -155,22 +173,52 @@ jobs:
           path: packaging/arch/*.pkg.tar.zst
           if-no-files-found: error
 
-  publish:
-    name: Публикация
+  # Последний шаг: пакет Arch — в черновик, проверка, что в черновике есть
+  # все установщики, и ссылка на него в сводке запуска. Публикует черновик
+  # человек.
+  finish:
+    name: Черновик готов
     needs: [draft, desktop, arch]
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_ID: ${{ needs.draft.outputs.release-id }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: arch-linux
           path: arch
 
-      - name: Пакет Arch в релиз, черновик — в опубликованные
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Пакет Arch — в черновик
         run: |
           gh release upload "$GITHUB_REF_NAME" arch/*.pkg.tar.zst \
             --repo "$GITHUB_REPOSITORY" --clobber
-          gh release edit "$GITHUB_REF_NAME" --draft=false \
-            --repo "$GITHUB_REPOSITORY"
+
+      - name: Все установщики на месте
+        run: |
+          assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
+            --jq '.[].name')
+          echo "$assets"
+          missing=0
+          for pattern in '*_x64-setup.exe' '*_x64_*.msi' '*_universal.dmg' '*-x86_64.pkg.tar.zst'; do
+            found=no
+            while IFS= read -r name; do
+              # Шаблон без кавычек: так [[ ]] сравнивает имя с маской.
+              if [[ $name == $pattern ]]; then found=yes; fi
+            done <<< "$assets"
+            if [ "$found" = no ]; then
+              echo "::error::В черновике нет файла $pattern"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Ссылка на черновик
+        run: |
+          url=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq .html_url)
+          {
+            echo "### Черновик релиза $GITHUB_REF_NAME готов"
+            echo
+            echo "Проверьте файлы и текст, затем Edit → Publish release: $url"
+          } >> "$GITHUB_STEP_SUMMARY"
