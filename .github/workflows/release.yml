@@ -1,15 +1,16 @@
-# Релиз: тег v0.1.0 → GitHub Release с установщиками для Windows (NSIS и
+# Релиз: тег vX.Y.Z → GitHub Release с установщиками для Windows (NSIS и
 # MSI), macOS (универсальный DMG: Apple Silicon и Intel) и пакетом для Arch
-# Linux (.pkg.tar.zst).
+# Linux (.pkg.tar.zst). Версия в src-tauri/Cargo.toml должна совпадать с
+# тегом; что ещё поменять при новой версии — packaging/README.md.
 #
-#   git tag v0.1.0 && git push origin v0.1.0
+#   git tag v0.2.0 && git push origin v0.2.0
 #
 # Ручной запуск (Actions → Release → Run workflow) собирает всё то же самое,
 # но релиз не создаёт: файлы остаются в артефактах запуска. Так конвейер
 # можно проверить до первого тега.
 #
 # Если сборка по тегу упала, релиз остаётся черновиком: после исправления
-# тег переставляют (git tag -f, git push --force origin v0.1.0), и запуск
+# тег переставляют (git tag -f, git push --force origin vX.Y.Z), и запуск
 # дополняет тот же черновик.
 name: Release
 

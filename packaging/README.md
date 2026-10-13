@@ -67,13 +67,37 @@ xdg-mime default Notivelle.desktop text/markdown
   3. собирает пакет Arch (`makepkg` в контейнере `archlinux:base-devel`);
   4. загружает всё в релиз и публикует его.
 
-Выпустить версию:
+### Новая версия
+
+Версия записана в нескольких файлах, и все они должны совпадать:
+
+| Файл | Что поменять | Как |
+|---|---|---|
+| `src-tauri/Cargo.toml` | `version = "X.Y.Z"` | руками; отсюда версию берут Tauri (настройки → «О программе», установщики), `release.yml` и `pkgver()` |
+| `src-tauri/Cargo.lock` | версия пакета `notivelle` | `cargo update --workspace` в `src-tauri` (зависимости не трогает) |
+| `package.json` и `package-lock.json` | `"version"` (в lock — два места) | `npm version X.Y.Z --no-git-tag-version` |
+| `packaging/arch/PKGBUILD` | `pkgver=X.Y.Z` | руками; это только подсказка, настоящую версию считает `pkgver()` |
+
+В `tauri.conf.json` версии нет — Tauri берёт её из `Cargo.toml`.
+
+Потом коммит и тег — без тега пакет и релиз будут не `X.Y.Z`:
 
 ```sh
-# версия в src-tauri/Cargo.toml (и package.json) уже 0.1.0
-git tag v0.1.0
-git push origin main v0.1.0
+git commit -am "Версия X.Y.Z"
+git tag vX.Y.Z
+git push origin main vX.Y.Z    # запускает release.yml
 ```
+
+Почему без коммита и тега версия не меняется: `makepkg` собирает не рабочую
+папку, а клон закоммиченного состояния (источник `git+file`), а версию пакета
+считает `pkgver()`: на коммите с тегом `vX.Y.Z` это `X.Y.Z`, иначе — версия
+из закоммиченного `Cargo.toml` плюс номер и хеш коммита (`0.2.0.r16.ab12cd3`).
+Эту версию `makepkg` записывает и в строку `pkgver=` самого PKGBUILD, поэтому
+между релизами после сборки PKGBUILD окажется изменённым — эту правку
+коммитить не нужно, её можно отменить (`git restore packaging/arch/PKGBUILD`).
+
+`release.yml` проверяет, что тег совпадает с версией в `Cargo.toml`, иначе
+релиз не создаётся.
 
 Проверить сборки без релиза: Actions → Release → Run workflow. Файлы
 останутся в артефактах запуска.
@@ -84,8 +108,8 @@ git push origin main v0.1.0
 
 ```sh
 git push origin main
-git tag -f v0.1.0
-git push --force origin v0.1.0
+git tag -f vX.Y.Z
+git push --force origin vX.Y.Z
 ```
 
 Установщик MSI собирается на русском (`src-tauri/tauri.windows.conf.json`,

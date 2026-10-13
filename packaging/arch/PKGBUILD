@@ -9,7 +9,7 @@
 # mise, поэтому в makedepends его нет.
 
 pkgname=notivelle
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='Obsidian-like Markdown editor for standalone files'
 arch=('x86_64')
@@ -36,9 +36,11 @@ options=('!lto' '!debug')
 source=("$pkgname::git+file://${startdir%/packaging/arch}")
 sha256sums=('SKIP')
 
-# На теге релиза (v0.1.0) версия — 0.1.0. Между релизами — версия из
-# Cargo.toml плюс номер и хеш коммита: 0.1.0.r12.1a2b3c4. pacman считает её
-# новее 0.1.0 и старше 0.1.1, так что обновления идут по порядку.
+# На теге релиза (v0.2.0) версия — 0.2.0. Между релизами — версия из
+# закоммиченного Cargo.toml плюс номер и хеш коммита: 0.2.0.r16.1a2b3c4.
+# pacman считает её новее 0.2.0 и старше 0.2.1, так что обновления идут по
+# порядку. Строку pkgver= выше makepkg перезаписывает результатом pkgver().
+# Как поднять версию — packaging/README.md, «Новая версия».
 pkgver() {
   cd "$pkgname"
   local tag version
