@@ -21,9 +21,12 @@ import type { EditingMode, ViewMode } from "./modes";
 import type { NoticeBar } from "./notice";
 import { currentSettings } from "./settings";
 import { textChange } from "./text-diff";
+import type { FoldState } from "./reading/folds";
 import type { ReadingView } from "./reading/view";
+import { findHeadingLine, parseWikiTarget } from "./wikilink";
 import type { StatusBar } from "./statusbar";
 import type { TabBar } from "./tabbar";
+import type { Toasts } from "./toasts";
 
 const APP_TITLE = "Notivelle";
 
@@ -50,6 +53,13 @@ interface Page {
   rendered: Rendered | null;
   /** Строка исходника вверху режима чтения — чтобы вернуться на то же место. */
   readingLine: number | null;
+  /**
+   * readingLine — цель перехода по ссылке: при показе развернуть разделы,
+   * в которых она спрятана, а не остановиться на свёрнутом заголовке.
+   */
+  revealReadingLine: boolean;
+  /** Свёрнутые разделы в режиме чтения (reading/folds.ts). */
+  folds: FoldState;
 }
 
 /** Вкладка: открытый файл или новый документ, ещё не сохранённый в файл. */
@@ -87,6 +97,7 @@ export interface WorkspaceParts {
   statusBar: StatusBar;
   tabBar: TabBar;
   notice: NoticeBar;
+  toasts: Toasts;
 }
 
 /**
@@ -105,6 +116,7 @@ export class Workspace {
   readonly #createState: (text: string, id: DocumentId | null) => EditorState;
   readonly #reading: ReadingView;
   readonly #statusBar: StatusBar;
+  readonly #toasts: Toasts;
   readonly #tabBar: TabBar;
   readonly #notice: NoticeBar;
   #tabs: Tab[] = [];
@@ -126,6 +138,7 @@ export class Workspace {
     this.#createState = parts.createState;
     this.#reading = parts.reading;
     this.#statusBar = parts.statusBar;
+    this.#toasts = parts.toasts;
     this.#tabBar = parts.tabBar;
     this.#notice = parts.notice;
     parts.tabBar.onActivate = (key) => {
@@ -197,8 +210,9 @@ export class Workspace {
    * Показывает результаты открытия файлов: новые вкладки, переход на уже
    * открытые, ошибки. Активной становится вкладка первого файла из пачки, а
    * нетронутый пустой новый документ закрывается — его место занял файл.
+   * Возвращает true, если какая-то вкладка стала активной.
    */
-  accept(outcomes: readonly OpenOutcome[]): void {
+  accept(outcomes: readonly OpenOutcome[]): boolean {
     let target: DocumentId | null = null;
     const failures: string[] = [];
     const mixed: string[] = [];
@@ -225,12 +239,13 @@ export class Workspace {
       for (const tab of this.#tabs.filter((candidate) => this.#isPristine(candidate))) this.#removeTab(tab);
     }
     if (failures.length > 0) {
-      this.#statusBar.showMessage(failures.join(" · "), "error");
+      this.#toasts.show(failures.join(" · "), "error");
     } else if (mixed.length > 0) {
-      this.#statusBar.showMessage(
+      this.#toasts.show(
         `Смешанные переводы строк в ${mixed.join(", ")}: при сохранении станут одного вида`,
       );
     }
+    return opened !== undefined;
   }
 
   /**
@@ -339,20 +354,69 @@ export class Workspace {
     try {
       this.accept(await api.takePendingDocuments());
     } catch (error) {
-      this.#statusBar.showMessage(errorMessage(error), "error");
+      this.#toasts.show(errorMessage(error), "error");
     }
   }
 
   /** Ссылка из режима чтения на файл рядом с документом. */
   async openLink(href: string): Promise<void> {
     if (this.#active.id === null) {
-      this.#statusBar.showMessage("Ссылки на файлы работают, когда документ сохранён в файл");
+      this.#toasts.show("Ссылки на файлы работают, когда документ сохранён в файл");
       return;
     }
     try {
       this.accept(await api.openLink(this.#active.id, href));
     } catch (error) {
-      this.#statusBar.showMessage(errorMessage(error), "error");
+      this.#toasts.show(errorMessage(error), "error");
+    }
+  }
+
+  /**
+   * Вики-ссылка `[[Заметка#Заголовок]]` из режима чтения или Live Preview.
+   * Заметку по имени ищет Rust (wikilinks.rs), а к заголовку вкладка
+   * прокручивается здесь; `[[#Заголовок]]` ведёт в этот же документ.
+   */
+  async openWikiLink(target: string): Promise<void> {
+    const { note, heading } = parseWikiTarget(target);
+    if (note !== "") {
+      if (this.#active.id === null) {
+        this.#toasts.show("Ссылки на файлы работают, когда документ сохранён в файл");
+        return;
+      }
+      try {
+        if (!this.accept(await api.openWikiLink(this.#active.id, target))) return;
+      } catch (error) {
+        this.#toasts.show(errorMessage(error), "error");
+        return;
+      }
+    }
+    if (heading !== null) this.#revealHeading(heading);
+  }
+
+  /**
+   * Показывает заголовок `heading` активной вкладки: в редакторе ставит на
+   * него курсор, в режиме чтения разворачивает свёрнутые разделы.
+   */
+  #revealHeading(heading: string): void {
+    const tab = this.#active;
+    const line = findHeadingLine(this.#view.state, heading);
+    if (line === null) {
+      this.#toasts.show(`Заголовок «${heading}» не найден в «${tab.fileName}»`);
+      return;
+    }
+    if (tab.mode !== "reading") {
+      this.#view.dispatch({ selection: { anchor: this.#view.state.doc.line(line).from } });
+      scrollToLine(this.#view, line);
+      this.#view.focus();
+      return;
+    }
+    tab.readingLine = line;
+    if (this.#reading.visible && tab.rendered?.doc === this.#view.state.doc) {
+      this.#reading.scrollToSourceLine(line, true);
+    } else {
+      // HTML ещё рендерится (вкладку только что открыли): #applyMode
+      // покажет его и сам перейдёт к строке.
+      tab.revealReadingLine = true;
     }
   }
 
@@ -361,7 +425,7 @@ export class Workspace {
     try {
       await api.openExternal(url);
     } catch (error) {
-      this.#statusBar.showMessage(errorMessage(error), "error");
+      this.#toasts.show(errorMessage(error), "error");
     }
   }
 
@@ -370,11 +434,11 @@ export class Workspace {
     return this.#exclusive(undefined, async () => {
       const tab = this.#active;
       if (tab.id !== null && !this.#isDirty(tab)) {
-        this.#statusBar.showMessage("Изменений нет");
+        this.#toasts.show("Изменений нет");
         return;
       }
       const saved = await this.#saveTab(tab);
-      if (saved) this.#statusBar.showMessage(`Сохранено: ${saved.fileName}`);
+      if (saved) this.#toasts.show(`Сохранено: ${saved.fileName}`);
     });
   }
 
@@ -438,6 +502,8 @@ export class Workspace {
       ...initialModes(),
       rendered: null,
       readingLine: null,
+      revealReadingLine: false,
+      folds: new Set(),
     };
   }
 
@@ -458,6 +524,8 @@ export class Workspace {
       ...newDocumentModes(),
       rendered: null,
       readingLine: null,
+      revealReadingLine: false,
+      folds: new Set(),
     };
     this.#tabs.push(tab);
     return tab;
@@ -488,7 +556,7 @@ export class Workspace {
     try {
       document = await api.reloadDocument(tab.id);
     } catch (error) {
-      this.#statusBar.showMessage(errorMessage(error), "error");
+      this.#toasts.show(errorMessage(error), "error");
       return;
     }
     if (!this.#tabs.includes(tab)) return;
@@ -508,7 +576,7 @@ export class Workspace {
       if (tab.mode === "reading") void this.#applyMode();
     }
     this.#refresh();
-    this.#statusBar.showMessage(message);
+    this.#toasts.show(message);
   }
 
   /** Плашка про файл на диске у активной вкладки. */
@@ -578,7 +646,7 @@ export class Workspace {
       try {
         html = await api.renderMarkdown(page.id, doc.toString());
       } catch (error) {
-        this.#statusBar.showMessage(errorMessage(error), "error");
+        this.#toasts.show(errorMessage(error), "error");
         page.mode = page.editingMode;
         this.#showEditor();
         this.#refresh();
@@ -593,9 +661,10 @@ export class Workspace {
     // show() вставляет HTML сразу, а формулы, код и диаграммы дорисовывает
     // асинхронно. Прокручиваем к нужному месту и сразу, и после дорисовки:
     // диаграммы меняют высоту блоков.
-    const drawn = this.#reading.show(html);
+    const drawn = this.#reading.show(html, page.folds);
     const line = page.readingLine;
-    if (line !== null) this.#reading.scrollToSourceLine(line);
+    if (line !== null) this.#reading.scrollToSourceLine(line, page.revealReadingLine);
+    page.revealReadingLine = false;
     this.#reading.focus();
     await drawn;
     if (line !== null && this.#active === page && page.mode === "reading") {
@@ -701,8 +770,8 @@ export class Workspace {
   }
 
   /**
-   * Запускает операцию, если не идёт другая, и показывает её ошибки в
-   * строке состояния. `whenBusy` — что вернуть, если операция не запущена
+   * Запускает операцию, если не идёт другая, и показывает её ошибки
+   * всплывающим уведомлением. `whenBusy` — что вернуть, если операция не запущена
    * или завершилась ошибкой.
    */
   async #exclusive<T>(whenBusy: T, task: () => Promise<T>): Promise<T> {
@@ -711,7 +780,7 @@ export class Workspace {
     try {
       return await task();
     } catch (error) {
-      this.#statusBar.showMessage(errorMessage(error), "error");
+      this.#toasts.show(errorMessage(error), "error");
       return whenBusy;
     } finally {
       this.#busy = false;

@@ -75,6 +75,67 @@
   text-decoration-color: var(--link);
 }
 
+/* Вики-ссылки (render.rs) — без href, поэтому браузер их не подчёркивает. */
+.markdown-rendered a.internal-link {
+  text-decoration-line: underline;
+}
+
+/* ---------- Сворачивание разделов (folds.ts) ---------- */
+
+.markdown-rendered > :is(h1, h2, h3, h4, h5, h6) {
+  position: relative;
+}
+
+/* Стрелка — в поле слева от заголовка. Размер от шрифта текста, а не
+   заголовка: у всех уровней она одна и та же, как в Obsidian. */
+.heading-fold {
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  display: grid;
+  place-items: center;
+  width: 1.3em;
+  height: 1.3em;
+  margin-right: 0.15em;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-faint);
+  font-size: var(--editor-font-size);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 0.12s;
+}
+
+.markdown-rendered > :hover > .heading-fold,
+.heading-fold:focus-visible,
+.is-collapsed > .heading-fold {
+  opacity: 1;
+}
+
+.heading-fold:hover {
+  background: var(--background-hover);
+  color: var(--text-normal);
+}
+
+.heading-fold svg {
+  width: 1em;
+  height: 1em;
+  transition: transform 0.12s;
+}
+
+.is-collapsed > .heading-fold svg {
+  transform: rotate(-90deg);
+}
+
+/* Блоки свёрнутого раздела. !important — у callouts, диаграмм и других
+   блоков свой display, и он не должен их снова показать. */
+.markdown-rendered > .fold-hidden {
+  display: none !important;
+}
+
 /* Те же теги в Live Preview: там их оборачивает inline.ts. */
 :is(.markdown-rendered, .cm-content) kbd {
   padding: 0.05em 0.4em;

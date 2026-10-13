@@ -54,6 +54,9 @@ const SKIPPED_NODES = new Set([
   "CommentBlock",
   "ProcessingInstructionBlock",
   "LinkReference",
+  // Имя заметки в `[[…]]` — не текст: опечатку в нём не исправить, не
+  // переименовав файл. Подпись после `|` проверяется.
+  "WikiLinkTarget",
 ]);
 
 /**

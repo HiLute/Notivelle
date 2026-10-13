@@ -15,6 +15,7 @@ import {
 
 import { currentSettings } from "../settings";
 import { reliableDragMove } from "./drag-move";
+import { headingFolds } from "./heading-folds";
 import { livePreview } from "./live-preview";
 import { markdownSyntaxExtensions } from "./markdown-syntax";
 import { spellcheck } from "./spellcheck";
@@ -59,7 +60,8 @@ function loadVim(): Promise<void> {
  * Базовый набор расширений редактора.
  *
  * Собран вручную, а не через `basicSetup`: номера строк, автодополнение и
- * fold-gutter в заметках не нужны. Live Preview включается и выключается
+ * fold-gutter в заметках не нужны. Сворачиваются только разделы — стрелкой
+ * у заголовка, как в Obsidian (heading-folds.ts). Live Preview включается и выключается
  * через `livePreviewCompartment` (см. setLivePreview).
  */
 export function editorExtensions(): Extension {
@@ -88,6 +90,7 @@ export function editorExtensions(): Extension {
       extensions: [markdownSyntaxExtensions],
     }),
     syntaxHighlighting(markdownHighlightStyle),
+    headingFolds(),
     editorTheme,
     keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
     spellcheckCompartment.of(settings.spellcheck ? spellcheck : []),

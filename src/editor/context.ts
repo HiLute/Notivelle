@@ -32,6 +32,8 @@ export function setDocumentId(id: DocumentId | null): StateEffect<unknown> {
 export interface LinkHandlers {
   openExternal(url: string): void;
   openLocal(href: string): void;
+  /** Вики-ссылка `[[цель]]`: заметку по имени ищет Rust (wikilinks.rs). */
+  openWikiLink(target: string): void;
 }
 
 export const linkHandlersFacet = Facet.define<LinkHandlers, LinkHandlers | null>({

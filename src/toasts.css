@@ -1,0 +1,61 @@
+/* Всплывающие уведомления (toasts.ts): сверху справа, под полосой вкладок. */
+
+.toasts {
+  position: fixed;
+  top: 3rem;
+  right: 1rem;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+  max-width: min(26rem, calc(100vw - 2rem));
+  /* Пустое место между уведомлениями пропускает щелчки к редактору. */
+  pointer-events: none;
+}
+
+.toast {
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--background-secondary);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.25);
+  color: var(--text-normal);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: text;
+  animation: toast-in 0.15s ease-out;
+}
+
+/* Ошибка — красной полосой слева, текст остаётся читаемым. */
+.toast[data-kind="error"] {
+  border-left: 4px solid var(--text-error);
+}
+
+.toast.is-leaving {
+  animation: toast-out 0.15s ease-in forwards;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast,
+  .toast.is-leaving {
+    animation: none;
+  }
+}

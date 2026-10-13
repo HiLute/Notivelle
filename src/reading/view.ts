@@ -1,6 +1,7 @@
 import "./markdown.css";
 
 import { addCopyButtons, highlightCodeBlocks } from "./code";
+import { type FoldState, isFoldedAway, setupHeadingFolds, toggleFold, unfoldAround } from "./folds";
 import { decorateCallouts } from "./icons";
 import { renderMath } from "./math";
 import { renderMermaid } from "./mermaid";
@@ -11,6 +12,8 @@ export interface ReadingLinks {
   openExternal(url: string): void;
   /** Ссылка на файл относительно документа — открыть во вкладке. */
   openLocal(href: string): void;
+  /** Вики-ссылка `[[цель]]` (render.rs выводит её с data-wikilink). */
+  openWikiLink(target: string): void;
 }
 
 /**
@@ -29,6 +32,8 @@ export class ReadingView {
   readonly #content: HTMLElement;
   /** Номер последнего показа: устаревшая дорисовка не трогает новый текст. */
   #generation = 0;
+  /** Свёрнутые разделы показанной вкладки (её собственное множество). */
+  #folds: FoldState = new Set();
 
   constructor(host: HTMLElement, links: ReadingLinks, toggleTask: ToggleTask) {
     this.#host = host;
@@ -40,16 +45,25 @@ export class ReadingView {
     // страницы приложения.
     const onLink = (event: MouseEvent) => {
       const link = (event.target as Element).closest("a");
+      const wikilink = link?.dataset.wikilink;
       const href = link?.getAttribute("href");
-      if (!href) return;
+      if (wikilink === undefined && !href) return;
       event.preventDefault();
       if (event.type === "auxclick" && event.button !== 1) return;
-      if (href.startsWith("#")) this.#scrollToAnchor(href.slice(1));
+      if (wikilink !== undefined) links.openWikiLink(wikilink);
+      else if (!href) return;
+      else if (href.startsWith("#")) this.#scrollToAnchor(href.slice(1));
       else if (/^(https?:|mailto:)/i.test(href)) links.openExternal(href);
       else links.openLocal(href);
     };
     host.addEventListener("click", onLink);
     host.addEventListener("auxclick", onLink);
+
+    // Стрелки у заголовков сворачивают и разворачивают разделы (folds.ts).
+    host.addEventListener("click", (event) => {
+      const heading = (event.target as Element).closest(".heading-fold")?.parentElement;
+      if (heading) toggleFold(this.#content, this.#folds, heading);
+    });
 
     // Чекбоксы задач меняют исходный текст, как в Obsidian. Браузер уже
     // переключил чекбокс; если правка не удалась, отмена события вернёт его.
@@ -67,11 +81,16 @@ export class ReadingView {
     return !this.#host.hidden;
   }
 
-  /** Показывает HTML и дорисовывает формулы, код и диаграммы. */
-  async show(html: string): Promise<void> {
+  /**
+   * Показывает HTML и дорисовывает формулы, код и диаграммы. `folds` —
+   * свёрнутые разделы вкладки: щелчки по стрелкам меняют это множество.
+   */
+  async show(html: string, folds: FoldState): Promise<void> {
     const generation = ++this.#generation;
     this.#host.hidden = false;
+    this.#folds = folds;
     this.#content.innerHTML = html;
+    setupHeadingFolds(this.#content, folds);
     decorateCallouts(this.#content);
     prepareTaskCheckboxes(this.#content);
     addCopyButtons(this.#content);
@@ -102,15 +121,20 @@ export class ReadingView {
    * Прокручивает к блоку, с которого начинается строка исходника `line`, а
    * если такого нет — к ближайшему блоку выше. Элементы идут в порядке
    * документа, и номера их строк не убывают, поэтому можно идти по порядку.
+   *
+   * Блоки в свёрнутых разделах пропускаются: место в свёрнутом разделе —
+   * это его заголовок. `reveal` — наоборот, развернуть разделы и показать
+   * сам блок (переход по ссылке к заголовку).
    */
-  scrollToSourceLine(line: number): void {
+  scrollToSourceLine(line: number, reveal = false): void {
     let target: HTMLElement | null = null;
     for (const element of this.#content.querySelectorAll<HTMLElement>("[data-sourcepos]")) {
       const start = startLine(element);
       if (start === null) continue;
       if (start > line) break;
-      target = element;
+      if (reveal || !isFoldedAway(element)) target = element;
     }
+    if (reveal && target) unfoldAround(this.#content, this.#folds, target);
     this.#scrollTo(target);
   }
 
@@ -122,7 +146,12 @@ export class ReadingView {
     } catch {
       // Некорректная %-последовательность: ищем как есть.
     }
-    this.#scrollTo(this.#content.querySelector<HTMLElement>(`[id="${CSS.escape(id)}"]`));
+    // Якорь comrak — пустая ссылка внутри заголовка: прокручиваем к самому
+    // заголовку и разворачиваем разделы, если он спрятан.
+    const anchor = this.#content.querySelector<HTMLElement>(`[id="${CSS.escape(id)}"]`);
+    const target = anchor?.closest<HTMLElement>("h1, h2, h3, h4, h5, h6") ?? anchor;
+    if (target) unfoldAround(this.#content, this.#folds, target);
+    this.#scrollTo(target);
   }
 
   #scrollTo(element: HTMLElement | null): void {

@@ -147,6 +147,8 @@ export const api = {
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   /** Открыть во вкладке Markdown-файл по ссылке относительно документа. */
   openLink: (id: DocumentId, href: string) => invoke<OpenOutcome[]>("open_link", { id, href }),
+  /** Открыть во вкладке заметку по вики-ссылке `[[цель]]`: файл ищется по имени. */
+  openWikiLink: (id: DocumentId, target: string) => invoke<OpenOutcome[]>("open_wikilink", { id, target }),
   /** Слова с ошибками из присланных (spellcheck.rs). */
   spellCheck: (words: string[]) => invoke<string[]>("spell_check", { words }),
   /** Варианты исправления слова. */

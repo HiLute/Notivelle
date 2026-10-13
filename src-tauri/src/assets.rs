@@ -6,6 +6,11 @@
 //! `mdimg://localhost/<id документа>/<путь>`, а Rust по такому запросу
 //! находит файл относительно папки документа и отдаёт его.
 //!
+//! Вложения `![[картинка.png]]` из Obsidian указывают не путь, а имя файла.
+//! Их адрес — `mdimg://localhost/<id документа>/<имя>?embed`, и файл по
+//! имени ищется уже при загрузке картинки (`wikilinks::resolve`): рендер
+//! текста не ходит по папкам.
+//!
 //! Отдаются только файлы с расширениями картинок: даже если в `WebView`
 //! выполнится чужой код, через этот протокол он не прочитает, скажем,
 //! ключи SSH.
@@ -18,9 +23,14 @@ use tauri::http::{Request, Response, StatusCode, header};
 use tauri::{AppHandle, Manager, Url};
 
 use crate::documents::{DocumentId, Documents};
+use crate::render::ImageUrls;
+use crate::wikilinks;
 
 /// Схема протокола для локальных картинок.
 pub const IMAGE_SCHEME: &str = "mdimg";
+
+/// Запрос адреса с `?embed` — вложение: файл ищется по имени.
+const EMBED_QUERY: &str = "embed";
 
 /// Самая большая картинка, которую отдаст протокол.
 const MAX_IMAGE_SIZE: u64 = 64 * 1024 * 1024;
@@ -59,6 +69,34 @@ pub fn image_url(document: Option<DocumentId>, src: &str) -> String {
     }
 }
 
+/// Адрес картинки-вложения `![[имя]]`: протокол найдёт файл по имени.
+/// Без документа искать не от чего, и картинка не покажется.
+pub fn embed_url(document: Option<DocumentId>, target: &str) -> String {
+    match document {
+        Some(id) => {
+            let encoded = utf8_percent_encode(target, PATH_ENCODE_SET);
+            format!("{}{}/{encoded}?{EMBED_QUERY}", protocol_base(), id.get())
+        }
+        None => target.to_owned(),
+    }
+}
+
+/// Адреса картинок документа для рендера (`render::ImageUrls`).
+pub struct DocumentImages {
+    /// `None` — новый документ, ещё не сохранённый в файл.
+    pub document: Option<DocumentId>,
+}
+
+impl ImageUrls for DocumentImages {
+    fn image(&self, src: &str) -> String {
+        image_url(self.document, src)
+    }
+
+    fn embed(&self, target: &str) -> String {
+        embed_url(self.document, target)
+    }
+}
+
 /// Путь в файловой системе, на который указывает адрес из Markdown, или
 /// `None`, если это не локальный файл (`https:`, `mailto:` и т. п.).
 ///
@@ -89,6 +127,11 @@ fn has_scheme(src: &str) -> bool {
         }
         None => false,
     }
+}
+
+/// Похоже ли имя файла на картинку (по расширению).
+pub fn is_image_name(name: &str) -> bool {
+    image_mime(Path::new(name)).is_some()
 }
 
 /// MIME-тип по расширению; `None` — это не картинка, и отдавать файл нельзя.
@@ -123,7 +166,8 @@ fn parse_request_path(uri_path: &str) -> Result<(DocumentId, PathBuf), StatusCod
 /// Обработчик протокола `mdimg`. Ошибки отдаются кодами HTTP: `WebView`
 /// покажет вместо картинки значок «не загрузилось».
 pub fn handle(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
-    let result = load_image(app, request.uri().path());
+    let embed = request.uri().query() == Some(EMBED_QUERY);
+    let result = load_image(app, request.uri().path(), embed);
     let response = match result {
         Ok((bytes, mime)) => Response::builder()
             .status(StatusCode::OK)
@@ -138,18 +182,31 @@ pub fn handle(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> 
     response.unwrap_or_else(|_| Response::new(Vec::new()))
 }
 
-fn load_image(app: &AppHandle, uri_path: &str) -> Result<(Vec<u8>, &'static str), StatusCode> {
+/// Читает картинку по пути из адреса. `embed` — путь на самом деле имя
+/// вложения, и файл надо найти, как для вики-ссылки.
+fn load_image(
+    app: &AppHandle,
+    uri_path: &str,
+    embed: bool,
+) -> Result<(Vec<u8>, &'static str), StatusCode> {
     let (id, path) = parse_request_path(uri_path)?;
-    let mime = image_mime(&path).ok_or(StatusCode::FORBIDDEN)?;
-    let path = if path.is_absolute() {
+    // Расширение проверяем до поиска: по `?embed` не должны искаться и
+    // отдаваться файлы, которые не картинки.
+    image_mime(&path).ok_or(StatusCode::FORBIDDEN)?;
+    let directory = || {
+        app.state::<Documents>()
+            .directory(id)
+            .map_err(|_| StatusCode::NOT_FOUND)
+    };
+    let path = if embed {
+        wikilinks::resolve(&directory()?, &path.to_string_lossy()).ok_or(StatusCode::NOT_FOUND)?
+    } else if path.is_absolute() {
         path
     } else {
-        let dir = app
-            .state::<Documents>()
-            .directory(id)
-            .map_err(|_| StatusCode::NOT_FOUND)?;
-        dir.join(path)
+        directory()?.join(path)
     };
+    // Итоговый путь — тоже картинка: поиск по имени мог найти `имя.md`.
+    let mime = image_mime(&path).ok_or(StatusCode::FORBIDDEN)?;
 
     let metadata = fs::metadata(&path).map_err(|_| StatusCode::NOT_FOUND)?;
     if !metadata.is_file() {
@@ -181,6 +238,18 @@ mod tests {
             parse_request_path(&path),
             Ok((id(7), PathBuf::from("../pics/my cat.png")))
         );
+    }
+
+    #[test]
+    fn embeds_go_through_the_protocol_with_a_marker() {
+        let url = embed_url(Some(id(3)), "Вложения/кот 1.png");
+        let parsed = Url::parse(&url).unwrap();
+        assert_eq!(parsed.query(), Some(EMBED_QUERY));
+        assert_eq!(
+            parse_request_path(parsed.path()),
+            Ok((id(3), PathBuf::from("Вложения/кот 1.png")))
+        );
+        assert_eq!(embed_url(None, "кот.png"), "кот.png");
     }
 
     #[test]
@@ -218,6 +287,8 @@ mod tests {
         assert_eq!(image_mime(Path::new("logo.svg")), Some("image/svg+xml"));
         assert_eq!(image_mime(Path::new(".ssh/id_ed25519")), None);
         assert_eq!(image_mime(Path::new("notes.md")), None);
+        assert!(is_image_name("Pasted image 20240101.png"));
+        assert!(!is_image_name("План"));
     }
 
     #[test]

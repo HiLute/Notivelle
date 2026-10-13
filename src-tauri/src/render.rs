@@ -2,9 +2,10 @@
 //!
 //! Конвейер:
 //! 1. comrak разбирает текст в дерево (AST);
-//! 2. цитаты вида `> [!type] …` превращаются в callouts;
-//! 3. comrak выводит дерево в HTML, по пути переписывая адреса картинок;
-//! 4. ammonia вычищает из HTML всё опасное: скрипты, обработчики событий,
+//! 2. вики-ссылки `[[…]]` и вложения `![[…]]` получают свою разметку;
+//! 3. цитаты вида `> [!type] …` превращаются в callouts;
+//! 4. comrak выводит дерево в HTML, по пути переписывая адреса картинок;
+//! 5. ammonia вычищает из HTML всё опасное: скрипты, обработчики событий,
 //!    ссылки `javascript:`.
 //!
 //! Формулы и диаграммы рисует фронтенд, уже после санитайзинга: здесь они
@@ -20,23 +21,37 @@ use comrak::{Arena, Node, Options};
 
 use crate::assets;
 use crate::callouts::{self, Fold};
+use crate::wikilinks::{self, Target};
+
+/// Адреса картинок для HTML. Рендер не знает, где лежит документ и как
+/// `WebView` получает локальные файлы, — это решает тот, кто его вызывает
+/// (`assets::DocumentImages`), а тесты подставляют свою реализацию.
+///
+/// Ограничения на трейт (`Send + Sync + RefUnwindSafe + 'static`) — из
+/// трейта `URLRewriter` comrak: адреса могут переписываться из разных
+/// потоков и не должны оставлять мусор при панике.
+pub trait ImageUrls: Send + Sync + RefUnwindSafe + 'static {
+    /// `![подпись](src)`: адрес из Markdown → адрес для `<img src>`.
+    fn image(&self, src: &str) -> String;
+    /// `![[имя]]`: файл ищется по имени, как у вики-ссылки.
+    fn embed(&self, target: &str) -> String;
+}
 
 /// Превращает Markdown в безопасный HTML.
-///
-/// `rewrite_image` получает адрес каждой картинки из Markdown и возвращает
-/// адрес для HTML (локальные картинки уходят на протокол `mdimg://`).
-pub fn render_html<F>(markdown: &str, rewrite_image: F) -> String
-where
-    // Требования трейта `URLRewriter` из comrak: замыкание может вызываться
-    // из разных потоков и не должно оставлять мусор при панике.
-    F: Fn(&str) -> String + Send + Sync + RefUnwindSafe + 'static,
-{
-    let options = options(Some(Arc::new(rewrite_image)));
+pub fn render_html(markdown: &str, urls: impl ImageUrls) -> String {
+    // `Arc` — общий указатель с подсчётом ссылок: адреса нужны и comrak
+    // (обычные картинки), и нашему преобразованию (вложения).
+    let urls = Arc::new(urls);
+    let rewriter = Arc::clone(&urls);
+    let options = options(Some(Arc::new(move |src: &str| rewriter.image(src))));
     // Арена — хранилище узлов дерева. Узлы ссылаются друг на друга обычными
     // ссылками `&'a`, и все живут ровно столько, сколько арена: в конце
     // функции дерево освобождается целиком, без подсчёта ссылок.
     let arena = Arena::new();
     let root = comrak::parse_document(&arena, markdown, &options);
+    // Вики-ссылки — до callouts: заголовок callout выводится в HTML сразу,
+    // и ссылки в нём должны быть уже нашими.
+    transform_wikilinks(&arena, root, urls.as_ref());
     transform_callouts(&arena, root, &options);
 
     let mut html = String::new();
@@ -59,6 +74,8 @@ fn options<'c>(rewrite_image: Option<Arc<dyn URLRewriter + 'c>>) -> Options<'c> 
     extension.math_code = true;
     // `==выделение==`, как в Obsidian.
     extension.highlight = true;
+    // `[[Заметка|подпись]]`: подпись после `|`, как в Obsidian.
+    extension.wikilinks_title_after_pipe = true;
     // YAML-шапку `---` в начале файла не показываем.
     extension.front_matter_delimiter = Some("---".to_owned());
     // Якоря у заголовков: ссылки вида `[раздел](#заголовок)` работают.
@@ -95,6 +112,140 @@ static SANITIZER: LazyLock<ammonia::Builder<'static>> = LazyLock::new(|| {
         .add_url_schemes([assets::IMAGE_SCHEME]);
     builder
 });
+
+/// Вики-ссылки и вложения Obsidian (`wikilinks.rs`).
+///
+/// `[[Заметка#Заголовок|подпись]]` comrak разбирает сам (узел `WikiLink`),
+/// но вывел бы обычную ссылку с именем заметки вместо адреса. Мы выводим
+/// `<a class="internal-link" data-wikilink="цель">`: по щелчку фронтенд
+/// отдаёт цель в Rust, а тот ищет файл (`commands::open_wikilink`).
+///
+/// `![[картинка.png]]` comrak не разбирает (`!` перед `[` он считает
+/// началом картинки) и оставляет текстом — вложения ищем в текстовых узлах.
+/// Код (`` `![[…]]` ``) лежит в других узлах, его это не касается.
+fn transform_wikilinks<'a>(arena: &'a Arena<'a>, root: Node<'a>, urls: &dyn ImageUrls) {
+    let nodes: Vec<Node<'a>> = root
+        .descendants()
+        .filter(|node| {
+            matches!(
+                node.data().value,
+                NodeValue::WikiLink(_) | NodeValue::Text(_)
+            )
+        })
+        .collect();
+    for node in nodes {
+        // Значение копируем: дальше узел меняется, а `data()` — это
+        // заимствование RefCell, которое нельзя держать во время изменений.
+        let value = node.data().value.clone();
+        match value {
+            NodeValue::WikiLink(link) => transform_wikilink(arena, node, &link.url),
+            NodeValue::Text(text) => transform_embeds(arena, node, &text, urls),
+            _ => {}
+        }
+    }
+}
+
+/// Заменяет узел `WikiLink` нашей ссылкой с тем же содержимым.
+fn transform_wikilink<'a>(arena: &'a Arena<'a>, link: Node<'a>, target: &str) {
+    // Без подписи comrak кладёт в ссылку саму цель. Obsidian показывает её
+    // по-человечески: `Заметка > Заголовок` вместо `Заметка#Заголовок`.
+    let label = inline_text(link);
+    if label.trim() == target.trim() {
+        while let Some(child) = link.first_child() {
+            child.detach();
+        }
+        link.append(text_node(arena, Target::parse(target).display()));
+    }
+    let (open, close) = wikilink_tags(target);
+    link.insert_before(raw_node(arena, open));
+    while let Some(child) = link.first_child() {
+        link.insert_before(child);
+    }
+    link.insert_before(raw_node(arena, close));
+    link.detach();
+}
+
+/// Разрезает текстовый узел по вложениям `![[…]]`: текст до, вложение,
+/// текст после.
+fn transform_embeds<'a>(arena: &'a Arena<'a>, node: Node<'a>, text: &str, urls: &dyn ImageUrls) {
+    let embeds = wikilinks::find_embeds(text);
+    if embeds.is_empty() {
+        return;
+    }
+    let mut rest = 0;
+    for embed in &embeds {
+        if embed.range.start > rest {
+            node.insert_before(text_node(arena, text[rest..embed.range.start].to_owned()));
+        }
+        let target = Target::parse(embed.target);
+        if assets::is_image_name(target.note) {
+            node.insert_before(raw_node(
+                arena,
+                embedded_image(target.note, embed.label, urls),
+            ));
+        } else {
+            // Встраивать заметки целиком Notivelle пока не умеет —
+            // показываем ссылку на неё.
+            let (open, close) = wikilink_tags(embed.target);
+            let label = embed.label.map_or_else(|| target.display(), str::to_owned);
+            node.insert_before(raw_node(arena, open));
+            node.insert_before(text_node(arena, label));
+            node.insert_before(raw_node(arena, close));
+        }
+        rest = embed.range.end;
+    }
+    if rest < text.len() {
+        node.insert_before(text_node(arena, text[rest..].to_owned()));
+    }
+    node.detach();
+}
+
+/// HTML начала и конца вики-ссылки на `target`.
+fn wikilink_tags(target: &str) -> (String, String) {
+    let target = escape_html(target);
+    (
+        format!(r#"<a class="internal-link" data-wikilink="{target}">"#),
+        "</a>".to_owned(),
+    )
+}
+
+/// `<img>` для вложения `![[картинка.png|300x200]]`. Подпись — либо размер,
+/// либо текст для `alt`.
+fn embedded_image(name: &str, label: Option<&str>, urls: &dyn ImageUrls) -> String {
+    let src = escape_html(&urls.embed(name));
+    let size = label.and_then(wikilinks::image_size);
+    let alt = match (label, size) {
+        (Some(label), None) if !label.is_empty() => label,
+        _ => name,
+    };
+    let alt = escape_html(alt);
+    let size = match size {
+        Some((width, Some(height))) => format!(r#" width="{width}" height="{height}""#),
+        Some((width, None)) => format!(r#" width="{width}""#),
+        None => String::new(),
+    };
+    format!(r#"<img class="internal-embed" src="{src}" alt="{alt}"{size}>"#)
+}
+
+/// Текст строчных узлов внутри `node`, без разметки.
+fn inline_text(node: Node<'_>) -> String {
+    node.descendants()
+        .filter_map(|node| match &node.data().value {
+            NodeValue::Text(text) => Some(text.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn text_node<'a>(arena: &'a Arena<'a>, text: String) -> Node<'a> {
+    arena.alloc(NodeValue::Text(text.into()).into())
+}
+
+/// Узел с готовым HTML: comrak выводит его как есть (ammonia потом всё
+/// равно проверит).
+fn raw_node<'a>(arena: &'a Arena<'a>, html: String) -> Node<'a> {
+    arena.alloc(NodeValue::Raw(html).into())
+}
 
 /// Находит все цитаты-callouts и заменяет их разметкой callout.
 fn transform_callouts<'a>(arena: &'a Arena<'a>, root: Node<'a>, options: &Options) {
@@ -252,8 +403,21 @@ fn escape_html(text: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Адреса картинок для тестов: видно, какой метод их построил.
+    struct TestUrls;
+
+    impl ImageUrls for TestUrls {
+        fn image(&self, src: &str) -> String {
+            format!("mdimg://test/{src}")
+        }
+
+        fn embed(&self, target: &str) -> String {
+            format!("mdimg://test/{target}?embed")
+        }
+    }
+
     fn render(markdown: &str) -> String {
-        render_html(markdown, |src: &str| format!("mdimg://test/{src}"))
+        render_html(markdown, TestUrls)
     }
 
     #[test]
@@ -391,6 +555,80 @@ mod tests {
         assert!(!html.contains("javascript:"), "{html}");
         assert!(!html.contains("onclick"), "{html}");
         assert!(html.contains("https://example.com"), "{html}");
+    }
+
+    #[test]
+    fn wikilinks_become_internal_links() {
+        let html = render("[[План]], [[План#Этап 1|первый этап]] и [[#Итоги]]\n");
+        assert!(
+            html.contains(r#"<a class="internal-link" data-wikilink="План" rel="noopener noreferrer">План</a>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(
+                r#"data-wikilink="План#Этап 1" rel="noopener noreferrer">первый этап</a>"#
+            ),
+            "{html}"
+        );
+        // Без подписи — как в Obsidian: только заголовок.
+        assert!(
+            html.contains(r##"data-wikilink="#Итоги" rel="noopener noreferrer">Итоги</a>"##),
+            "{html}"
+        );
+        assert!(!html.contains("href"), "{html}");
+    }
+
+    #[test]
+    fn wikilink_without_label_shows_note_and_heading() {
+        let html = render("[[План#Этап 1]]\n");
+        assert!(html.contains(">План &gt; Этап 1</a>"), "{html}");
+    }
+
+    #[test]
+    fn wikilinks_work_in_tables_and_callout_titles() {
+        let html =
+            render("| a |\n|---|\n| [[План\\|план]] |\n\n> [!note] См. [[Итоги]]\n> текст\n");
+        assert!(html.contains(r#"data-wikilink="План""#), "{html}");
+        assert!(html.contains(">план</a>"), "{html}");
+        assert!(
+            html.contains(r#"<span class="callout-title-inner">См. <a class="internal-link" data-wikilink="Итоги""#),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn image_embeds_become_images() {
+        let html = render("Схема: ![[кот 1.png|300]] и ![[кот.png|200x100]], ![[кот.png|Рыжий]]\n");
+        assert!(
+            html.contains(r#"<img class="internal-embed" src="mdimg://test/кот 1.png?embed" alt="кот 1.png" width="300">"#),
+            "{html}"
+        );
+        assert!(html.contains(r#"width="200" height="100""#), "{html}");
+        assert!(html.contains(r#"alt="Рыжий">"#), "{html}");
+        assert!(html.contains("Схема: <img"), "{html}");
+        assert!(!html.contains("![["), "{html}");
+    }
+
+    #[test]
+    fn note_embeds_become_links() {
+        let html = render("![[План#Этап 1]]\n");
+        assert!(
+            html.contains(r#"<a class="internal-link" data-wikilink="План#Этап 1" rel="noopener noreferrer">План &gt; Этап 1</a>"#),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn wikilinks_in_code_stay_code() {
+        let html = render("`[[План]]` и `![[кот.png]]`\n\n```\n![[кот.png]]\n```\n");
+        assert!(!html.contains("internal"), "{html}");
+        assert!(html.contains("![[кот.png]]"), "{html}");
+    }
+
+    #[test]
+    fn wikilink_targets_are_escaped() {
+        let html = render("[[a\"><script>x</script>]]\n");
+        assert!(!html.contains("<script"), "{html}");
     }
 
     #[test]

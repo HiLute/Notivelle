@@ -99,11 +99,15 @@ export class RenderedBlockWidget extends WidgetType {
     // Переход по ссылке увёл бы WebView со страницы приложения, поэтому
     // ссылки открываем сами — так же, как в режиме чтения.
     block.addEventListener("click", (event) => {
-      const href = (event.target as Element).closest("a")?.getAttribute("href");
-      if (!href) return;
+      const link = (event.target as Element).closest("a");
+      const wikilink = link?.dataset.wikilink;
+      const href = link?.getAttribute("href");
+      if (wikilink === undefined && !href) return;
       event.preventDefault();
       const handlers = view.state.facet(linkHandlersFacet);
-      if (handlers && !href.startsWith("#")) openHref(handlers, href);
+      if (!handlers) return;
+      if (wikilink !== undefined) handlers.openWikiLink(wikilink);
+      else if (href && !href.startsWith("#")) openHref(handlers, href);
     });
 
     const cached = cachedBlockHtml(this.#key);

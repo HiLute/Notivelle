@@ -82,7 +82,7 @@ export function createCellEditor(options: CellEditorOptions): EditorView {
         inlinePreview,
         hasSpellcheck(main) ? spellcheck : [],
         documentIdFacet.of(main.state.facet(documentIdFacet)),
-        linkHandlersFacet.of(main.state.facet(linkHandlersFacet) ?? { openExternal() {}, openLocal() {} }),
+        linkHandlersFacet.of(main.state.facet(linkHandlersFacet) ?? { openExternal() {}, openLocal() {}, openWikiLink() {} }),
         drawSelection(),
         EditorView.lineWrapping,
         EditorView.contentAttributes.of({ "aria-label": "Ячейка таблицы" }),

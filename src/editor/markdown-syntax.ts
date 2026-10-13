@@ -4,17 +4,21 @@ import type { BlockParser, DelimiterType, InlineParser, MarkdownConfig } from "@
 /**
  * Расширения парсера Markdown (lezer) для синтаксиса, которого нет в GFM,
  * но который понимает Rust-рендер (render.rs) и Obsidian: `==выделение==`,
- * формулы `$…$` и `$$…$$`. Правила повторяют comrak, чтобы редактор и режим
- * чтения одинаково решали, где формула.
+ * формулы `$…$` и `$$…$$`, вики-ссылки `[[…]]`. Правила повторяют comrak,
+ * чтобы редактор и режим чтения одинаково решали, где формула или ссылка.
  */
 
 /** Теги подсветки для новых узлов (их цвет задаёт editor/theme.ts). */
 export const highlightTag = Tag.define();
 export const mathTag = Tag.define();
 
+const BANG = 33;
 const DOLLAR = 36;
 const EQUALS = 61;
+const BRACKET_OPEN = 91;
 const BACKSLASH = 92;
+const BRACKET_CLOSE = 93;
+const PIPE = 124;
 
 const isSpace = (ch: number) => ch === 32 || ch === 9 || ch === 10 || ch === -1;
 const isDigit = (ch: number) => ch >= 48 && ch <= 57;
@@ -70,6 +74,59 @@ const inlineMath: InlineParser = {
     }
     return -1;
   },
+};
+
+/**
+ * Вики-ссылка `[[цель|подпись]]` и вложение `![[цель]]`, как в Obsidian.
+ * Как у comrak: внутри нет `[` и `]`, первый `|` отделяет подпись. `\|`
+ * тоже отделяет — так пишут вики-ссылки в таблицах, где `|` делит ячейки.
+ *
+ * Узел WikiLink (или WikiEmbed) с детьми: WikiLinkMark (`[[`, `|`, `]]`),
+ * WikiLinkTarget и, если есть, WikiLinkLabel.
+ */
+const wikiLink: InlineParser = {
+  name: "WikiLink",
+  parse(cx, next, pos) {
+    const embed = next === BANG;
+    const open = embed ? pos + 1 : pos;
+    if ((!embed && next !== BRACKET_OPEN) || cx.char(open) !== BRACKET_OPEN || cx.char(open + 1) !== BRACKET_OPEN) {
+      return -1;
+    }
+    const targetFrom = open + 2;
+    let pipeFrom = -1;
+    let pipeTo = -1;
+    let close = -1;
+    for (let i = targetFrom; i < cx.end; i++) {
+      const ch = cx.char(i);
+      if (ch === BRACKET_OPEN) return -1;
+      if (ch === BRACKET_CLOSE) {
+        close = i;
+        break;
+      }
+      const escapedPipe = ch === BACKSLASH && cx.char(i + 1) === PIPE;
+      if (ch === PIPE || escapedPipe) {
+        if (pipeFrom >= 0) return -1;
+        pipeFrom = i;
+        pipeTo = escapedPipe ? i + 2 : i + 1;
+        i = pipeTo - 1;
+      } else if (ch === BACKSLASH) {
+        i++;
+      }
+    }
+    if (close < 0 || cx.char(close + 1) !== BRACKET_CLOSE) return -1;
+    const targetTo = pipeFrom >= 0 ? pipeFrom : close;
+    if (cx.slice(targetFrom, targetTo).trim() === "") return -1;
+
+    const children = [cx.elt("WikiLinkMark", pos, targetFrom), cx.elt("WikiLinkTarget", targetFrom, targetTo)];
+    if (pipeFrom >= 0) {
+      children.push(cx.elt("WikiLinkMark", pipeFrom, pipeTo));
+      if (close > pipeTo) children.push(cx.elt("WikiLinkLabel", pipeTo, close));
+    }
+    children.push(cx.elt("WikiLinkMark", close, close + 2));
+    return cx.addElement(cx.elt(embed ? "WikiEmbed" : "WikiLink", pos, close + 2, children));
+  },
+  // Раньше обычных ссылок и картинок: иначе `[[` разобралось бы как `[`.
+  before: "Link",
 };
 
 /** `$$` в начале строки открывает блок формулы до следующего `$$`. */
@@ -149,7 +206,12 @@ export const markdownSyntaxExtensions: MarkdownConfig = {
     { name: "InlineMathMark", style: t.processingInstruction },
     { name: "BlockMath", block: true, style: { "BlockMath/...": mathTag } },
     { name: "BlockMathMark", style: t.processingInstruction },
+    { name: "WikiLink" },
+    { name: "WikiEmbed" },
+    { name: "WikiLinkMark", style: t.processingInstruction },
+    { name: "WikiLinkTarget", style: t.link },
+    { name: "WikiLinkLabel", style: t.link },
   ],
-  parseInline: [highlight, inlineMath],
+  parseInline: [highlight, inlineMath, wikiLink],
   parseBlock: [frontMatter, blockMath],
 };

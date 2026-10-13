@@ -18,6 +18,7 @@ import { loadSettings, onSettingsChange } from "./settings";
 import { SettingsPanel } from "./settings-panel";
 import { StatusBar } from "./statusbar";
 import { TabBar } from "./tabbar";
+import { Toasts } from "./toasts";
 import { Workspace } from "./workspace";
 
 function requireElement(id: string): HTMLElement {
@@ -27,12 +28,14 @@ function requireElement(id: string): HTMLElement {
 }
 
 const statusBar = new StatusBar(requireElement("statusbar"));
+const toasts = new Toasts();
 
 /** Ссылки из режима чтения и Live Preview открываются одинаково. */
 const links: LinkHandlers = {
   // `workspace` объявлена ниже; ссылки открываются только после запуска.
   openExternal: (url) => void workspace.openExternal(url),
   openLocal: (href) => void workspace.openLink(href),
+  openWikiLink: (target) => void workspace.openWikiLink(target),
 };
 
 /**
@@ -70,8 +73,9 @@ const workspace = new Workspace({
   statusBar,
   tabBar: new TabBar(requireElement("tabbar")),
   notice: new NoticeBar(requireElement("notice")),
+  toasts,
 });
-const showError = (message: string) => statusBar.showMessage(message, "error");
+const showError = (message: string) => toasts.show(message, "error");
 const settingsPanel = new SettingsPanel(showError);
 statusBar.onModeChange = (mode) => workspace.setMode(mode);
 statusBar.onOpenSettings = () => settingsPanel.open();
@@ -199,7 +203,7 @@ async function init(): Promise<void> {
   try {
     workspace.accept(await api.restoreDocuments());
   } catch (error) {
-    statusBar.showMessage(errorMessage(error), "error");
+    toasts.show(errorMessage(error), "error");
   }
 
   // Сначала подписываемся на событие, потом забираем очередь: так не
@@ -213,6 +217,6 @@ async function init(): Promise<void> {
     const info = await api.appInfo();
     settingsPanel.about = `${info.name} ${info.version} · Tauri ${info.tauriVersion} · ${info.os}`;
   } catch (error) {
-    statusBar.showMessage(`Нет связи с Rust-частью: ${errorMessage(error)}`, "error");
+    toasts.show(`Нет связи с Rust-частью: ${errorMessage(error)}`, "error");
   }
 }

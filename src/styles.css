@@ -320,23 +320,17 @@ body {
   user-select: none;
 }
 
-/* Путь и сообщение делят свободное место; длинный путь обрезается слева
-   направо многоточием, формат и курсор всегда видны целиком. */
+/* Путь занимает свободное место и обрезается многоточием; формат, режимы
+   и курсор всегда видны целиком. */
 .statusbar [data-part="file"] {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.statusbar [data-part="message"] {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.statusbar [data-part="message"][data-kind="error"] {
-  color: var(--text-error);
+.statusbar > :not([data-part="file"]) {
+  flex-shrink: 0;
 }
 
 /* ---------- Переключатель режимов ---------- */

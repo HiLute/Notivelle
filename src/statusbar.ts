@@ -7,11 +7,6 @@ import settingsIcon from "lucide-static/icons/settings.svg?raw";
 import type { FormatInfo } from "./ipc";
 import { MODE_LABELS, type ViewMode } from "./modes";
 
-type MessageKind = "info" | "error";
-
-/** Сколько висит информационное сообщение. Ошибки висят до следующего действия. */
-const INFO_TIMEOUT_MS = 4000;
-
 const MODE_ICONS: Record<ViewMode, string> = {
   reading: bookOpen,
   live: penLine,
@@ -25,8 +20,8 @@ const MODE_HINTS: Record<ViewMode, string> = {
 };
 
 /**
- * Строка состояния: файл, сообщения, формат файла, переключатель режимов и
- * позиция курсора.
+ * Строка состояния: файл, формат файла, переключатель режимов и позиция
+ * курсора. Сообщения — всплывающими уведомлениями (toasts.ts).
  */
 export class StatusBar {
   /** Пользователь выбрал режим в переключателе. */
@@ -35,15 +30,12 @@ export class StatusBar {
   onOpenSettings: () => void = () => {};
 
   readonly #file: HTMLElement;
-  readonly #message: HTMLElement;
   readonly #format: HTMLElement;
   readonly #cursor: HTMLElement;
   readonly #modeButtons = new Map<ViewMode, HTMLButtonElement>();
-  #messageTimer: number | undefined;
 
   constructor(root: HTMLElement) {
     this.#file = part(root, "file");
-    this.#message = part(root, "message");
     this.#format = part(root, "format");
     this.#cursor = part(root, "cursor");
     this.#buildModeSwitch(part(root, "mode"));
@@ -91,21 +83,6 @@ export class StatusBar {
     const head = state.selection.main.head;
     const line = state.doc.lineAt(head);
     this.#cursor.textContent = `Стр. ${line.number}, стлб ${head - line.from + 1}`;
-  }
-
-  showMessage(text: string, kind: MessageKind = "info"): void {
-    window.clearTimeout(this.#messageTimer);
-    this.#message.textContent = text;
-    this.#message.dataset.kind = kind;
-    if (kind === "info") {
-      this.#messageTimer = window.setTimeout(() => this.clearMessage(), INFO_TIMEOUT_MS);
-    }
-  }
-
-  clearMessage(): void {
-    window.clearTimeout(this.#messageTimer);
-    this.#message.textContent = "";
-    delete this.#message.dataset.kind;
   }
 
   /** Три кнопки-иконки, как сегменты одного переключателя. */

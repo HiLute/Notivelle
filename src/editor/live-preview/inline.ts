@@ -9,16 +9,19 @@ import {
 } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
 
+import { imageSize, isImageName, parseWikiTarget, wikiDisplay } from "../../wikilink";
 import { documentIdFacet, linkHandlersFacet, openHref } from "../context";
 import { touches, touchesLines } from "./selection";
 import {
   BulletWidget,
   CheckboxWidget,
   CodeHeaderWidget,
+  embedUrl,
   ImageWidget,
   imageUrl,
   MathWidget,
   RuleWidget,
+  WikiLinkWidget,
 } from "./widgets";
 
 const hidden = Decoration.replace({});
@@ -87,11 +90,14 @@ export const inlinePreview = ViewPlugin.fromClass(
       // Обычный клик ставит курсор, и ссылка раскрывается для правки.
       mousedown(event, view) {
         if (!(event.ctrlKey || event.metaKey)) return false;
-        const href = (event.target as Element).closest<HTMLElement>("[data-href]")?.dataset.href;
+        const link = (event.target as Element).closest<HTMLElement>("[data-href], [data-wikilink]");
         const handlers = view.state.facet(linkHandlersFacet);
-        if (!href || !handlers) return false;
+        if (!link || !handlers) return false;
+        const { href, wikilink } = link.dataset;
+        if (wikilink !== undefined) handlers.openWikiLink(wikilink);
+        else if (href) openHref(handlers, href);
+        else return false;
         event.preventDefault();
-        openHref(handlers, href);
         return true;
       },
     },
@@ -132,6 +138,10 @@ function buildDecorations(view: EditorView): DecorationSet {
           return;
         case "Image":
           addImage(state, node, decorations);
+          return false;
+        case "WikiLink":
+        case "WikiEmbed":
+          addWikiLink(state, node, decorations);
           return false;
         case "InlineMath":
           if (!touches(state, node.from, node.to)) {
@@ -233,6 +243,58 @@ function addLink(state: EditorState, node: SyntaxNode, decorations: Range<Decora
   decorations.push(hidden.range(node.from, textFrom));
   decorations.push(hidden.range(textTo, node.to));
   if (textTo > textFrom) decorations.push(linkMark(href).range(textFrom, textTo));
+}
+
+function wikiLinkMark(target: string): Decoration {
+  return Decoration.mark({
+    class: "cm-lp-link",
+    attributes: { "data-wikilink": target, title: "Ctrl+клик — открыть ссылку" },
+  });
+}
+
+/**
+ * `[[цель|подпись]]`: без курсора видна только подпись (или имя заметки),
+ * оформленная как ссылка. `![[кот.png|300]]` показывается картинкой;
+ * вложенную заметку Notivelle показывает ссылкой на неё.
+ */
+function addWikiLink(state: EditorState, node: SyntaxNode, decorations: Range<Decoration>[]): void {
+  const targetNode = node.getChild("WikiLinkTarget");
+  if (!targetNode || touches(state, node.from, node.to)) return;
+  const target = state.sliceDoc(targetNode.from, targetNode.to).trim();
+  const labelNode = node.getChild("WikiLinkLabel");
+  const label = labelNode ? state.sliceDoc(labelNode.from, labelNode.to).trim() : "";
+
+  if (node.name === "WikiEmbed") {
+    const name = parseWikiTarget(target).note;
+    if (isImageName(name)) {
+      // У нового, ещё не сохранённого документа картинку искать не от чего —
+      // остаётся исходный текст, как у обычной картинки (addImage).
+      const src = embedUrl(state.facet(documentIdFacet), name);
+      if (!src) return;
+      const size = imageSize(label);
+      const widget = new ImageWidget(src, size || !label ? name : label, size);
+      decorations.push(Decoration.replace({ widget }).range(node.from, node.to));
+      return;
+    }
+  }
+
+  if (labelNode && label) {
+    decorations.push(hidden.range(node.from, labelNode.from));
+    decorations.push(wikiLinkMark(target).range(labelNode.from, labelNode.to));
+    decorations.push(hidden.range(labelNode.to, node.to));
+    return;
+  }
+  // Без подписи: «Заметка» остаётся текстом документа, а «Заметка#Раздел»
+  // заменяется надписью «Заметка > Раздел», как в Obsidian.
+  const display = wikiDisplay(target);
+  if (display === state.sliceDoc(targetNode.from, targetNode.to)) {
+    decorations.push(hidden.range(node.from, targetNode.from));
+    decorations.push(wikiLinkMark(target).range(targetNode.from, targetNode.to));
+    decorations.push(hidden.range(targetNode.to, node.to));
+  } else {
+    const widget = new WikiLinkWidget(display, target);
+    decorations.push(Decoration.replace({ widget }).range(node.from, node.to));
+  }
 }
 
 /** `![подпись](адрес)` без курсора показывается картинкой. */

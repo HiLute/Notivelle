@@ -138,17 +138,29 @@ export class MathWidget extends WidgetType {
   }
 }
 
-/** `![alt](src)` → картинка. */
+/** Размер картинки из вложения `![[кот.png|300x200]]`. */
+export interface ImageSize {
+  width: number;
+  height: number | null;
+}
+
+/** `![alt](src)` или вложение `![[кот.png|300]]` → картинка. */
 export class ImageWidget extends WidgetType {
   constructor(
     readonly url: string,
     readonly alt: string,
+    readonly size: ImageSize | null = null,
   ) {
     super();
   }
 
   override eq(other: ImageWidget): boolean {
-    return other.url === this.url && other.alt === this.alt;
+    return (
+      other.url === this.url &&
+      other.alt === this.alt &&
+      other.size?.width === this.size?.width &&
+      other.size?.height === this.size?.height
+    );
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -157,6 +169,10 @@ export class ImageWidget extends WidgetType {
     image.src = this.url;
     image.alt = this.alt;
     image.title = this.alt;
+    if (this.size) {
+      image.width = this.size.width;
+      if (this.size.height !== null) image.height = this.size.height;
+    }
     // Высота строки меняется, когда картинка загрузится.
     image.addEventListener("load", () => view.requestMeasure());
     image.addEventListener("error", () => image.classList.add("cm-lp-image-broken"));
@@ -181,6 +197,50 @@ export function imageUrl(documentId: DocumentId | null, src: string): string | n
   } catch {
     // Некорректная %-последовательность: оставляем путь как есть.
   }
-  const base = navigator.userAgent.includes("Windows") ? "http://mdimg.localhost/" : "mdimg://localhost/";
-  return `${base}${documentId}/${encodeURIComponent(path)}`;
+  return `${protocolBase()}${documentId}/${encodeURIComponent(path)}`;
+}
+
+/**
+ * Адрес вложения `![[кот.png]]` — как в Rust (assets.rs, embed_url):
+ * файл по имени найдёт протокол `mdimg`, увидев `?embed`.
+ */
+export function embedUrl(documentId: DocumentId | null, name: string): string | null {
+  if (documentId === null) return null;
+  return `${protocolBase()}${documentId}/${encodeURIComponent(name)}?embed`;
+}
+
+/** На Windows WebView2 видит свои протоколы как `http://<схема>.localhost`. */
+function protocolBase(): string {
+  return navigator.userAgent.includes("Windows") ? "http://mdimg.localhost/" : "mdimg://localhost/";
+}
+
+/**
+ * Вики-ссылка без подписи, у которой текст не совпадает с исходником:
+ * `[[План#Этап]]` показывается как «План > Этап», как в Obsidian.
+ */
+export class WikiLinkWidget extends WidgetType {
+  constructor(
+    readonly text: string,
+    readonly target: string,
+  ) {
+    super();
+  }
+
+  override eq(other: WikiLinkWidget): boolean {
+    return other.text === this.text && other.target === this.target;
+  }
+
+  toDOM(): HTMLElement {
+    const link = document.createElement("span");
+    link.className = "cm-lp-link";
+    link.dataset.wikilink = this.target;
+    link.title = "Ctrl+клик — открыть ссылку";
+    link.textContent = this.text;
+    return link;
+  }
+
+  /** Обычный клик ставит курсор в ссылку, Ctrl+клик ловит inline.ts. */
+  override ignoreEvent(): boolean {
+    return false;
+  }
 }

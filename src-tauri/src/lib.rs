@@ -13,6 +13,7 @@
 //! - `render` — Markdown → безопасный HTML для режима чтения;
 //! - `callouts` — типы и разбор callouts в стиле Obsidian;
 //! - `assets` — протокол `mdimg://` для локальных картинок, пути из ссылок;
+//! - `wikilinks` — вики-ссылки `[[…]]` и вложения: разбор, поиск файла по имени;
 //! - `spellcheck` — проверка орфографии (ru, en) и личный словарь;
 //! - `watcher` — слежение за открытыми файлами на диске;
 //! - `config` — настройки в `settings.toml`;
@@ -38,6 +39,7 @@ mod pending;
 mod render;
 mod spellcheck;
 mod watcher;
+mod wikilinks;
 
 use std::path::Path;
 
@@ -135,6 +137,7 @@ pub fn run() -> tauri::Result<()> {
             commands::render_markdown,
             commands::open_external,
             commands::open_link,
+            commands::open_wikilink,
             commands::spell_check,
             commands::spell_suggest,
             commands::spell_add_word,

@@ -25,6 +25,7 @@ use crate::pending::PendingFiles;
 use crate::render;
 use crate::spellcheck::{self, PersonalDictionary};
 use crate::watcher::FileWatcher;
+use crate::wikilinks;
 
 /// Сведения о сборке для строки состояния.
 ///
@@ -177,9 +178,10 @@ pub async fn render_markdown(
     text: String,
 ) -> Result<String, AppError> {
     run_blocking(window, move |_, _| {
-        Ok(render::render_html(&text, move |src: &str| {
-            assets::image_url(id, src)
-        }))
+        Ok(render::render_html(
+            &text,
+            assets::DocumentImages { document: id },
+        ))
     })
     .await
 }
@@ -232,6 +234,40 @@ pub async fn open_link(
             return Err(link_error("по ссылкам открываются только Markdown-файлы"));
         }
         let path = documents.directory(id)?.join(target);
+        let outcomes = documents.open_all(&[path]);
+        watch_open_files(window, documents);
+        Ok(outcomes)
+    })
+    .await
+}
+
+/// Открывает во вкладке заметку по вики-ссылке `[[цель]]` из документа `id`.
+///
+/// Файл ищется по имени, как в Obsidian (`wikilinks::resolve`). К заголовку
+/// из `[[Заметка#Заголовок]]` фронтенд прокручивает сам, когда вкладка
+/// откроется; `[[#Заголовок]]` (этот же документ) сюда не приходит.
+#[tauri::command]
+pub async fn open_wikilink(
+    window: WebviewWindow,
+    id: DocumentId,
+    target: String,
+) -> Result<Vec<OpenOutcome>, AppError> {
+    run_blocking(window, move |window, documents| {
+        let link_error = |reason: String| AppError::Link {
+            href: format!("[[{target}]]"),
+            reason,
+        };
+        let note = wikilinks::Target::parse(&target).note;
+        if note.is_empty() {
+            return Err(link_error("в ссылке нет имени заметки".to_owned()));
+        }
+        let path = wikilinks::resolve(&documents.directory(id)?, note)
+            .ok_or_else(|| link_error(format!("файл «{note}» не найден")))?;
+        if !document::is_markdown_path(&path) {
+            return Err(link_error(
+                "по ссылкам открываются только Markdown-файлы".to_owned(),
+            ));
+        }
         let outcomes = documents.open_all(&[path]);
         watch_open_files(window, documents);
         Ok(outcomes)
